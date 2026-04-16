@@ -26,7 +26,6 @@ Item {
     property bool   checkBusy:    false        // true while checkAll() is in flight
     property real   checkStarted: 0           // epoch ms when checkBusy was last set
     property bool   modulesPanelOpen: false    // toggle the watched-modules editor
-    property string storageProbe:  "—"         // QML-routing experiment: raw response from storage_module
     property bool   coreReady:     false       // true once stash core responds to getStatus
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -74,11 +73,6 @@ Item {
             quotaUsed  = q.used
             quotaTotal = q.total
         }
-
-        // QML-routing experiment: can we reach storage_module from third-party QML?
-        // If this returns anything other than null/timeout, tokens work in this context.
-        var sr = logos.callModule("storage_module", "getStatus", [])
-        root.storageProbe = (sr !== null && sr !== undefined && sr !== "") ? sr : "null/empty"
     }
 
     function iconFor(type) {
@@ -176,7 +170,7 @@ Item {
                 color: root.nodeStatus === "ready"    ? root.successGreen :
                        root.nodeStatus === "starting" ? root.warningYellow :
                                                         root.errorRed
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.alignment: Qt.AlignVCenter
             }
 
             Text {
@@ -202,24 +196,6 @@ Item {
                 text: "Stash core not loaded — storage unavailable"
                 font.pixelSize: 11
                 color: root.warningYellow
-            }
-        }
-
-        // ── QML routing experiment probe ──────────────────────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            Text {
-                text: "storage_module probe:"
-                font.pixelSize: 10
-                color: root.textMuted
-            }
-            Text {
-                text: root.storageProbe
-                font.pixelSize: 10
-                color: root.storageProbe === "null/empty" ? root.errorRed : root.successGreen
-                elide: Text.ElideRight
-                Layout.fillWidth: true
-                leftPadding: 4
             }
         }
 
