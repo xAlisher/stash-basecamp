@@ -4,8 +4,31 @@
 #include <QJsonArray>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QDir>
+#include <QFile>
+#include <QTextStream>
+#include <QFileDevice>
 
 #include "plugin/StashPlugin.h"
+
+class TestableStashPlugin : public StashPlugin {
+public:
+    void setFakeIpfsPath(const QString& p) { m_path = p; }
+protected:
+    QString bundledIpfsPath() const override { return m_path; }
+private:
+    QString m_path;
+};
+
+static bool writeFakeIpfs(const QString& path, const QString& output, int exitCode) {
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return false;
+    QTextStream s(&f);
+    s << "#!/bin/sh\necho '" << output << "'\nexit " << exitCode << "\n";
+    f.close();
+    f.setPermissions(f.permissions() | QFileDevice::ExeOwner | QFileDevice::ExeGroup);
+    return true;
+}
 
 static void clearStashSettings()
 {
@@ -58,6 +81,12 @@ private slots:
 
     // checkAll — guard path (no logosAPI)
     void testCheckAllWithoutLogosAPIReturnsError();
+
+    // uploadViaIpfs — bundled binary tests
+    void testUploadViaIpfsReturnsCid();
+    void testUploadViaIpfsEmptyPath();
+    void testUploadViaIpfsBinaryMissing();
+    void testUploadViaIpfsNonZeroExit();
 
 private:
     StashPlugin m_plugin;
@@ -156,6 +185,52 @@ void TestStashPlugin::testCheckAllWithoutLogosAPIReturnsError()
     // initLogos() never called → logosAPI is null → must return error JSON
     StashPlugin fresh;
     auto obj = parseObj(fresh.checkAll());
+    QVERIFY(obj.contains(QStringLiteral("error")));
+    QVERIFY(!obj[QStringLiteral("error")].toString().isEmpty());
+}
+
+void TestStashPlugin::testUploadViaIpfsReturnsCid()
+{
+    const QString fakeBin = QDir::tempPath() + QStringLiteral("/fake_ipfs_ok.sh");
+    QVERIFY(writeFakeIpfs(fakeBin, QStringLiteral("QmTestCid123"), 0));
+
+    TestableStashPlugin p;
+    p.setFakeIpfsPath(fakeBin);
+
+    const auto obj = parseObj(p.uploadViaIpfs(QStringLiteral("/tmp/some_file.bin")));
+    QVERIFY(obj.contains(QStringLiteral("cid")));
+    QCOMPARE(obj[QStringLiteral("cid")].toString(), QStringLiteral("QmTestCid123"));
+}
+
+void TestStashPlugin::testUploadViaIpfsEmptyPath()
+{
+    TestableStashPlugin p;
+    p.setFakeIpfsPath(QStringLiteral("/nonexistent/ipfs"));
+
+    const auto obj = parseObj(p.uploadViaIpfs({}));
+    QVERIFY(obj.contains(QStringLiteral("error")));
+    QVERIFY(!obj[QStringLiteral("error")].toString().isEmpty());
+}
+
+void TestStashPlugin::testUploadViaIpfsBinaryMissing()
+{
+    TestableStashPlugin p;
+    p.setFakeIpfsPath(QStringLiteral("/nonexistent/path/to/ipfs"));
+
+    const auto obj = parseObj(p.uploadViaIpfs(QStringLiteral("/tmp/some_file.bin")));
+    QVERIFY(obj.contains(QStringLiteral("error")));
+    QVERIFY(obj[QStringLiteral("error")].toString().contains(QStringLiteral("not found")));
+}
+
+void TestStashPlugin::testUploadViaIpfsNonZeroExit()
+{
+    const QString fakeBin = QDir::tempPath() + QStringLiteral("/fake_ipfs_fail.sh");
+    QVERIFY(writeFakeIpfs(fakeBin, QStringLiteral("error output"), 1));
+
+    TestableStashPlugin p;
+    p.setFakeIpfsPath(fakeBin);
+
+    const auto obj = parseObj(p.uploadViaIpfs(QStringLiteral("/tmp/some_file.bin")));
     QVERIFY(obj.contains(QStringLiteral("error")));
     QVERIFY(!obj[QStringLiteral("error")].toString().isEmpty());
 }

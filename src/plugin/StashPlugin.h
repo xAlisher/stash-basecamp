@@ -57,6 +57,9 @@ public:
 signals:
     void eventResponse(const QString& eventName, const QVariantList& data);
 
+protected:
+    virtual QString bundledIpfsPath() const;
+
 private:
     static QString errorJson(const QString& msg);
     static QString queuedJson();

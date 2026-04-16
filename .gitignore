@@ -3,3 +3,4 @@ build/
 *.so
 *.o
 docs/
+third_party/kubo/bin/ipfs

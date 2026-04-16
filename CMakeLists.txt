@@ -32,6 +32,12 @@ else()
         "/nix/store/047dmhc4gi7yib02i1fbwidxpksqvcc2-logos-cpp-sdk")
 endif()
 
+# ── Bundled kubo binary ───────────────────────────────────────────────────────
+set(KUBO_BIN "${CMAKE_SOURCE_DIR}/third_party/kubo/bin/ipfs")
+if(NOT EXISTS "${KUBO_BIN}")
+    message(FATAL_ERROR "Bundled kubo binary not found.\nRun: bash scripts/fetch-kubo.sh")
+endif()
+
 # ── logos-storage-nim static library ─────────────────────────────────────────
 set(LOGOS_STORAGE_DIR "${CMAKE_SOURCE_DIR}/third_party/logos-storage-nim")
 
@@ -143,6 +149,7 @@ install(CODE "
 ")
 
 install(TARGETS stash_plugin LIBRARY DESTINATION "${STASH_MODULE_DIR}")
+install(PROGRAMS "${KUBO_BIN}" DESTINATION "${STASH_MODULE_DIR}")
 install(FILES
     modules/stash/manifest.json
     modules/stash/metadata.json

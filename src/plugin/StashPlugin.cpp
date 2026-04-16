@@ -1,11 +1,15 @@
 #include "StashPlugin.h"
 
 #include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QSettings>
+#include <dlfcn.h>
 
 #include "core/StorageClient.h"
 #include "cpp/logos_api.h"
@@ -144,21 +148,55 @@ QString StashPlugin::checkAll()
 
 // ── IPFS upload ───────────────────────────────────────────────────────────────
 
+QString StashPlugin::bundledIpfsPath() const
+{
+    // Use a file-local symbol so dladdr resolves this .so's own path
+    // without a pointer-to-member cast (which is UB and warns under GCC).
+    static const auto anchor = [](){};
+    Dl_info info;
+    if (dladdr(reinterpret_cast<const void*>(&anchor), &info) == 0
+            || info.dli_fname == nullptr)
+        return {};
+    return QFileInfo(QString::fromLocal8Bit(info.dli_fname))
+               .absoluteDir().filePath(QStringLiteral("ipfs"));
+}
+
 QString StashPlugin::uploadViaIpfs(const QString& filePath)
 {
     if (filePath.isEmpty())
         return errorJson(QStringLiteral("filePath is empty"));
 
+    const QString ipfsBin = bundledIpfsPath();
+    if (ipfsBin.isEmpty() || !QFileInfo::exists(ipfsBin))
+        return errorJson(QStringLiteral("bundled ipfs binary not found — run scripts/fetch-kubo.sh"));
+
+    static const QString ipfsPath = QStringLiteral("/tmp/stash-ipfs");
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("IPFS_PATH"), ipfsPath);
+
+    // Init the repo once if it doesn't exist yet
+    if (!QFileInfo::exists(ipfsPath + QStringLiteral("/config"))) {
+        QProcess init;
+        init.setProcessEnvironment(env);
+        init.start(ipfsBin, {QStringLiteral("init"), QStringLiteral("--empty-repo")});
+        if (!init.waitForStarted(3000) || !init.waitForFinished(15000) || init.exitCode() != 0) {
+            const QString err = QString::fromUtf8(init.readAllStandardError()).trimmed();
+            return errorJson(err.isEmpty() ? QStringLiteral("ipfs init failed") : err);
+        }
+    }
+
     QProcess proc;
-    proc.start(QStringLiteral("ipfs"),
-               {QStringLiteral("add"), QStringLiteral("--quieter"), filePath});
+    proc.setProcessEnvironment(env);
+    proc.start(ipfsBin, {QStringLiteral("--offline"),
+                         QStringLiteral("add"),
+                         QStringLiteral("--quieter"),
+                         filePath});
 
     if (!proc.waitForStarted(3000))
-        return errorJson(QStringLiteral("ipfs not found — install IPFS and start the daemon"));
-
+        return errorJson(QStringLiteral("bundled ipfs binary failed to start"));
     if (!proc.waitForFinished(60000))
         return errorJson(QStringLiteral("ipfs timed out"));
-
     if (proc.exitCode() != 0) {
         const QString err = QString::fromUtf8(proc.readAllStandardError()).trimmed();
         return errorJson(err.isEmpty() ? QStringLiteral("ipfs exited with error") : err);
