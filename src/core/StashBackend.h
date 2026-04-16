@@ -4,6 +4,7 @@
 #include <QString>
 #include <QJsonArray>
 #include <QDateTime>
+#include <functional>
 
 #include "StorageClient.h"
 
@@ -36,6 +37,10 @@ public:
 
     // Async upload. Returns false immediately if unavailable.
     bool upload(const QString& filePath);
+
+    // Async upload with a success callback fired (on the Qt thread) when the CID is ready.
+    bool uploadWithCallback(const QString& filePath,
+                            std::function<void(const QString& cid)> onSuccess);
 
     // Async download. Returns false immediately if unavailable.
     bool download(const QString& cid, const QString& destPath);

@@ -16,12 +16,30 @@ TokenManager*     LogosAPI::getTokenManager() const { return nullptr; }
 bool LogosAPIClient::isConnected() const { return false; }
 
 QVariant LogosAPIClient::invokeRemoteMethod(
+    const QString&, const QString&, const QVariantList&, Timeout)
+{ return {}; }
+
+QVariant LogosAPIClient::invokeRemoteMethod(
+    const QString&, const QString&, const QVariant&, Timeout)
+{ return {}; }
+
+QVariant LogosAPIClient::invokeRemoteMethod(
     const QString&, const QString&, const QVariant&, const QVariant&, Timeout)
 { return {}; }
 
 QVariant LogosAPIClient::invokeRemoteMethod(
     const QString&, const QString&, const QVariant&, const QVariant&,
+    const QVariant&, Timeout)
+{ return {}; }
+
+QVariant LogosAPIClient::invokeRemoteMethod(
+    const QString&, const QString&, const QVariant&, const QVariant&,
     const QVariant&, const QVariant&, Timeout)
+{ return {}; }
+
+QVariant LogosAPIClient::invokeRemoteMethod(
+    const QString&, const QString&, const QVariant&, const QVariant&,
+    const QVariant&, const QVariant&, const QVariant&, Timeout)
 { return {}; }
 
 void LogosAPIClient::onEvent(

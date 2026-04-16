@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantList>
 
 #include "interface.h"
@@ -28,6 +29,18 @@ public:
     // Download a CID to a local path. Returns {"queued":true} or {"error":"..."}.
     Q_INVOKABLE QString download(const QString& cid, const QString& destPath);
 
+    // ── Module watch list ────────────────────────────────────────────────────
+    // Newline-separated module names. Stash will call getFileForStash() on each.
+    Q_INVOKABLE QString setWatchedModules(const QString& newlineSeparated);
+
+    // Returns {"modules":["notes","keycard",...]} or {"modules":[]}.
+    Q_INVOKABLE QString getWatchedModules() const;
+
+    // Poll all watched modules: call getFileForStash(), upload found files,
+    // and call setBackupCid(cid, timestamp) on each module that returned a file.
+    // Returns {"checked":N,"queued":M} or {"error":"..."}.
+    Q_INVOKABLE QString checkAll();
+
     // "ready" | "starting" | "offline"
     Q_INVOKABLE QString getStatus();
 
@@ -41,9 +54,9 @@ signals:
     void eventResponse(const QString& eventName, const QVariantList& data);
 
 private:
-    static QString okJson();
-    static QString queuedJson();
     static QString errorJson(const QString& msg);
+    static QString queuedJson();
 
-    StashBackend m_backend;
+    StashBackend  m_backend;
+    QStringList   m_watchedModules;
 };

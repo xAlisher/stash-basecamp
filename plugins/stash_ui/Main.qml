@@ -19,25 +19,39 @@ Item {
     readonly property color borderColor:    "#333333"
 
     // ── State ─────────────────────────────────────────────────────────────
-    property string nodeStatus: "starting"   // "ready" | "starting" | "offline"
-    property var    logItems:   []
-    property int    quotaUsed:  0
-    property int    quotaTotal: 0
+    property string nodeStatus:   "starting"   // "ready" | "starting" | "offline"
+    property var    logItems:     []
+    property int    quotaUsed:    0
+    property int    quotaTotal:   0
+    property bool   checkBusy:    false        // true while checkAll() is in flight
+    property bool   modulesPanelOpen: false    // toggle the watched-modules editor
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
+    // logos.callModule wraps the C++ QString return in an extra JSON layer — parse twice.
     function callModuleParse(raw) {
-        try { return JSON.parse(raw) } catch(e) { return null }
+        try {
+            var tmp = JSON.parse(raw)
+            return (typeof tmp === 'string') ? JSON.parse(tmp) : tmp
+        } catch(e) { return null }
     }
 
     function refresh() {
         if (typeof logos === "undefined" || !logos.callModule) return
 
-        var st = logos.callModule("stash", "getStatus", [])
-        if (st) nodeStatus = String(st).replace(/"/g, "")
+        var st = callModuleParse(logos.callModule("stash", "getStatus", []))
+        if (st !== null) nodeStatus = typeof st === 'string' ? st : JSON.stringify(st)
 
         var logRaw = callModuleParse(logos.callModule("stash", "getLog", []))
-        if (Array.isArray(logRaw)) logItems = logRaw
+        if (Array.isArray(logRaw)) {
+            logItems = logRaw
+            // Clear checkBusy when the latest entry is a terminal event.
+            if (root.checkBusy && logRaw.length > 0) {
+                var last = logRaw[logRaw.length - 1].type
+                if (last === "uploaded" || last === "backup_uploaded" || last === "error")
+                    root.checkBusy = false
+            }
+        }
 
         var q = callModuleParse(logos.callModule("stash", "getQuota", []))
         if (q && q.used !== undefined) {
@@ -48,32 +62,36 @@ Item {
 
     function iconFor(type) {
         switch(type) {
-            case "uploading":   return "↑"
-            case "uploaded":    return "✓"
-            case "downloading": return "↓"
-            case "downloaded":  return "✓"
-            case "error":       return "✗"
-            case "offline":     return "○"
-            case "quota_reached": return "⚠"
-            default:            return "·"
+            case "uploading":        return "↑"
+            case "uploaded":         return "✓"
+            case "backup_uploading": return "↑"
+            case "backup_uploaded":  return "★"
+            case "downloading":      return "↓"
+            case "downloaded":       return "✓"
+            case "error":            return "✗"
+            case "offline":          return "○"
+            case "quota_reached":    return "⚠"
+            default:                 return "·"
         }
     }
 
     function colorFor(type) {
         switch(type) {
             case "uploaded":
-            case "downloaded":  return root.successGreen
-            case "error":       return root.errorRed
-            case "offline":     return root.textMuted
-            case "quota_reached": return root.warningYellow
+            case "downloaded":
+            case "backup_uploaded": return root.successGreen
+            case "error":           return root.errorRed
+            case "offline":         return root.textMuted
+            case "quota_reached":   return root.warningYellow
             case "uploading":
-            case "downloading": return root.accentOrange
-            default:            return root.textSecondary
+            case "backup_uploading":
+            case "downloading":     return root.accentOrange
+            default:                return root.textSecondary
         }
     }
 
     function isCidRow(type) {
-        return type === "uploaded"
+        return type === "uploaded" || type === "backup_uploaded"
     }
 
     function formatTs(ms) {
@@ -183,6 +201,139 @@ Item {
                            root.quotaPercent() > 0.7 ? root.warningYellow :
                                                        root.accentOrange
                     Behavior on width { NumberAnimation { duration: 300 } }
+                }
+            }
+        }
+
+        // ── Check Now + Modules config row ───────────────────────────────
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            // Check Now button
+            Rectangle {
+                Layout.fillWidth: true
+                height: 36
+                radius: 6
+                color: checkBtn.containsMouse && !root.checkBusy
+                       ? Qt.lighter(root.accentOrange, 1.15) : root.accentOrange
+                opacity: root.checkBusy ? 0.5 : 1.0
+
+                Text {
+                    anchors.centerIn: parent
+                    text: root.checkBusy ? "Checking…" : "Check Now"
+                    font.pixelSize: 13
+                    font.bold: true
+                    color: "#FFFFFF"
+                }
+
+                MouseArea {
+                    id: checkBtn
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: !root.checkBusy
+                    onClicked: {
+                        if (typeof logos === "undefined" || !logos.callModule) return
+                        root.checkBusy = true
+                        var res = callModuleParse(logos.callModule("stash", "checkAll", []))
+                        // checkBusy cleared when log entries settle (or on error)
+                        if (!res || res.error) root.checkBusy = false
+                    }
+                }
+            }
+
+            // Modules gear button
+            Rectangle {
+                width: 36; height: 36
+                radius: 6
+                color: gearBtn.containsMouse ? root.bgSecondary : "transparent"
+                border.color: root.borderColor
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "⚙"
+                    font.pixelSize: 16
+                    color: root.modulesPanelOpen ? root.accentOrange : root.textSecondary
+                }
+
+                MouseArea {
+                    id: gearBtn
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: root.modulesPanelOpen = !root.modulesPanelOpen
+                }
+            }
+        }
+
+        // ── Watched modules editor (collapsible) ──────────────────────────
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 4
+            visible: root.modulesPanelOpen
+
+            Text {
+                text: "Watched modules (one per line):"
+                font.pixelSize: 11
+                color: root.textSecondary
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                height: 80
+                radius: 4
+                color: root.bgSecondary
+                border.color: root.borderColor
+                border.width: 1
+
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    TextArea {
+                        id: modulesInput
+                        background: null
+                        color: root.textPrimary
+                        font.pixelSize: 12
+                        font.family: "monospace"
+                        wrapMode: TextArea.NoWrap
+                        placeholderText: "notes\nkeycard"
+                        placeholderTextColor: root.textMuted
+
+                        Component.onCompleted: {
+                            if (typeof logos !== "undefined" && logos.callModule) {
+                                var res = callModuleParse(logos.callModule("stash", "getWatchedModules", []))
+                                if (res && Array.isArray(res.modules))
+                                    text = res.modules.join("\n")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.alignment: Qt.AlignRight
+                width: 60; height: 26
+                radius: 4
+                color: saveBtn.containsMouse ? root.accentOrange : root.bgSecondary
+                border.color: root.borderColor
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "Save"
+                    font.pixelSize: 11
+                    color: root.textPrimary
+                }
+
+                MouseArea {
+                    id: saveBtn
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: {
+                        if (typeof logos === "undefined" || !logos.callModule) return
+                        logos.callModule("stash", "setWatchedModules", [modulesInput.text])
+                        root.modulesPanelOpen = false
+                    }
                 }
             }
         }
