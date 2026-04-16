@@ -106,9 +106,15 @@ QString StashPlugin::checkAll()
 
         ++checked;
 
+        // Convention: module "foo" registers its backend as "FooBackend".
+        // This lets checkAll() work without knowing module internals.
+        QString objectName = moduleName;
+        objectName[0] = objectName[0].toUpper();
+        objectName += QStringLiteral("Backend");
+
         // Ask the module if it has a file ready for stash.
         const QVariant raw = client->invokeRemoteMethod(
-            QStringLiteral("NotesBackend"), QStringLiteral("getFileForStash"));
+            objectName, QStringLiteral("getFileForStash"));
         const QJsonObject resp =
             QJsonDocument::fromJson(raw.toString().toUtf8()).object();
 
@@ -117,16 +123,16 @@ QString StashPlugin::checkAll()
         const QString filePath = resp.value(QStringLiteral("path")).toString();
         if (filePath.isEmpty()) continue;
 
-        // Capture stable pointer and module name for the callback.
+        // Capture for the async callback.
         auto* capturedClient = client;
-        const QString capturedModule = moduleName;
+        const QString capturedObject = objectName;
 
         const bool ok = m_backend.uploadWithCallback(
             filePath,
-            [capturedClient, capturedModule](const QString& cid) {
+            [capturedClient, capturedObject](const QString& cid) {
                 const QString ts = QString::number(QDateTime::currentSecsSinceEpoch());
                 capturedClient->invokeRemoteMethod(
-                    QStringLiteral("NotesBackend"),
+                    capturedObject,
                     QStringLiteral("setBackupCid"),
                     cid, ts);
             });

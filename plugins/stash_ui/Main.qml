@@ -236,8 +236,9 @@ Item {
                         if (typeof logos === "undefined" || !logos.callModule) return
                         root.checkBusy = true
                         var res = callModuleParse(logos.callModule("stash", "checkAll", []))
-                        // checkBusy cleared when log entries settle (or on error)
-                        if (!res || res.error) root.checkBusy = false
+                        // Clear immediately if nothing was queued (no log entry will arrive)
+                        // or on error. Only stay busy when uploads are actually in flight.
+                        if (!res || res.error || res.queued === 0) root.checkBusy = false
                     }
                 }
             }
