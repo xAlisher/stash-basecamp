@@ -73,6 +73,10 @@ private slots:
     void testLogEntriesJson();
 
     void testLogEventSignalFired();
+
+    // uploadWithCallback
+    void testUploadWithCallbackFiresOnSuccess();
+    void testUploadWithCallbackNotFiredOnError();
 };
 
 // ── Status ────────────────────────────────────────────────────────────────────
@@ -245,6 +249,65 @@ void TestStashBackend::testLogEventSignalFired()
 
     b->upload(f.fileName());
     QVERIFY(types.contains(QStringLiteral("uploading")));
+    delete b;
+}
+
+// ── uploadWithCallback ────────────────────────────────────────────────────────
+
+void TestStashBackend::testUploadWithCallbackFiresOnSuccess()
+{
+    auto [b, mock] = makeBackend();
+
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write("payload");
+    f.close();
+
+    QString receivedCid;
+    b->uploadWithCallback(f.fileName(), [&](const QString& cid) {
+        receivedCid = cid;
+    });
+
+    QVERIFY(!mock->uploadedPaths.isEmpty());
+
+    mock->fireUploadDone(QStringLiteral("zDvZCallbackCid"));
+
+    // Callback must have fired with the CID.
+    QCOMPARE(receivedCid, QStringLiteral("zDvZCallbackCid"));
+    // Log must show "uploaded".
+    bool foundUploaded = false;
+    for (const auto& e : b->logEntries()) {
+        if (e.toObject()[QStringLiteral("type")].toString() == QStringLiteral("uploaded"))
+            foundUploaded = true;
+    }
+    QVERIFY(foundUploaded);
+    delete b;
+}
+
+void TestStashBackend::testUploadWithCallbackNotFiredOnError()
+{
+    auto [b, mock] = makeBackend();
+
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write("payload");
+    f.close();
+
+    bool callbackFired = false;
+    b->uploadWithCallback(f.fileName(), [&](const QString&) {
+        callbackFired = true;
+    });
+
+    mock->fireUploadFailed();  // error — callback must NOT fire
+
+    QVERIFY(!callbackFired);
+    // Log must show "error".
+    bool foundError = false;
+    for (const auto& e : b->logEntries()) {
+        if (e.toObject()[QStringLiteral("type")].toString() == QStringLiteral("error"))
+            foundError = true;
+    }
+    QVERIFY(foundError);
     delete b;
 }
 

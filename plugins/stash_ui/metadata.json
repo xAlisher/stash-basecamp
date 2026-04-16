@@ -1,5 +1,13 @@
 {
-  "name": "Stash",
-  "description": "Lean decentralised storage — drop a file, get a CID back",
-  "icon": "icons/app_icon.png"
+  "name": "stash_ui",
+  "version": "0.1.0",
+  "description": "Lean decentralised storage — UI",
+  "author": "Stash",
+  "type": "ui_qml",
+  "pluginType": "qml",
+  "view": "Main.qml",
+  "dependencies": ["stash"],
+  "category": "storage",
+  "capabilities": [],
+  "icon": ""
 }

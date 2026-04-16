@@ -35,6 +35,12 @@ QString StashBackend::status() const
 
 bool StashBackend::upload(const QString& filePath)
 {
+    return uploadWithCallback(filePath, nullptr);
+}
+
+bool StashBackend::uploadWithCallback(const QString& filePath,
+                                       std::function<void(const QString&)> onSuccess)
+{
     if (!m_client || !m_client->isAvailable()) {
         appendLog(QStringLiteral("offline"), {});
         return false;
@@ -44,11 +50,13 @@ bool StashBackend::upload(const QString& filePath)
     appendLog(QStringLiteral("uploading"), name);
 
     m_client->uploadFile(filePath,
-        [this, name](const QString& cid, const QString& error) {
+        [this, onSuccess](const QString& cid, const QString& error) {
             if (!error.isEmpty()) {
                 appendLog(QStringLiteral("error"), error);
             } else {
                 appendLog(QStringLiteral("uploaded"), cid);
+                if (onSuccess)
+                    onSuccess(cid);
             }
         });
 

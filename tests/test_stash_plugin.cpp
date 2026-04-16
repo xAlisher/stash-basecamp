@@ -2,8 +2,16 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QSettings>
+#include <QStandardPaths>
 
 #include "plugin/StashPlugin.h"
+
+static void clearStashSettings()
+{
+    QSettings s{QLatin1String("logos"), QLatin1String("stash")};
+    s.remove(QLatin1String("watchedModules"));
+}
 
 // initLogos() is never called in these tests — no real storage node starts.
 // All tests exercise the plugin's JSON contract and guard paths.
@@ -43,6 +51,14 @@ private slots:
     // getQuota — returns JSON
     void testGetQuotaReturnsJson();
 
+    // setWatchedModules / getWatchedModules
+    void testSetWatchedModulesParsesNewlineSeparated();
+    void testSetWatchedModulesIgnoresBlankLines();
+    void testGetWatchedModulesEmptyInitially();
+
+    // checkAll — guard path (no logosAPI)
+    void testCheckAllWithoutLogosAPIReturnsError();
+
 private:
     StashPlugin m_plugin;
 };
@@ -50,6 +66,7 @@ private:
 void TestStashPlugin::initTestCase()
 {
     QStandardPaths::setTestModeEnabled(true);
+    clearStashSettings();  // ensure clean slate for watched-modules tests
 }
 
 void TestStashPlugin::testGetStatusOfflineBeforeInit()
@@ -104,6 +121,43 @@ void TestStashPlugin::testGetQuotaReturnsJson()
     auto obj = parseObj(m_plugin.getQuota());
     // Placeholder returns {used:0, total:0} — just verify it's valid JSON
     QVERIFY(!obj.isEmpty() || true);  // quota may be empty string before node
+}
+
+void TestStashPlugin::testSetWatchedModulesParsesNewlineSeparated()
+{
+    StashPlugin p;
+    auto result = parseObj(p.setWatchedModules(QStringLiteral("notes\nkeycard")));
+    QVERIFY(result.contains(QStringLiteral("modules")));
+    auto arr = result[QStringLiteral("modules")].toArray();
+    QCOMPARE(arr.size(), 2);
+    QCOMPARE(arr[0].toString(), QStringLiteral("notes"));
+    QCOMPARE(arr[1].toString(), QStringLiteral("keycard"));
+}
+
+void TestStashPlugin::testSetWatchedModulesIgnoresBlankLines()
+{
+    StashPlugin p;
+    auto result = parseObj(p.setWatchedModules(QStringLiteral("\nnotes\n\n  keycard  \n")));
+    auto arr = result[QStringLiteral("modules")].toArray();
+    QCOMPARE(arr.size(), 2);
+}
+
+void TestStashPlugin::testGetWatchedModulesEmptyInitially()
+{
+    clearStashSettings();  // other tests may have persisted modules
+    StashPlugin p;
+    auto result = parseObj(p.getWatchedModules());
+    QVERIFY(result.contains(QStringLiteral("modules")));
+    QVERIFY(result[QStringLiteral("modules")].toArray().isEmpty());
+}
+
+void TestStashPlugin::testCheckAllWithoutLogosAPIReturnsError()
+{
+    // initLogos() never called → logosAPI is null → must return error JSON
+    StashPlugin fresh;
+    auto obj = parseObj(fresh.checkAll());
+    QVERIFY(obj.contains(QStringLiteral("error")));
+    QVERIFY(!obj[QStringLiteral("error")].toString().isEmpty());
 }
 
 QTEST_MAIN(TestStashPlugin)

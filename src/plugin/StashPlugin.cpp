@@ -1,23 +1,38 @@
 #include "StashPlugin.h"
 
-#include "core/LibStorageTransport.h"
+#include <QDateTime>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSettings>
+
 #include "core/StorageClient.h"
 #include "cpp/logos_api.h"
+#include "cpp/logos_api_client.h"
+
+static constexpr const char* kSettingsOrg  = "logos";
+static constexpr const char* kSettingsApp  = "stash";
+static constexpr const char* kModulesKey   = "watchedModules";
 
 StashPlugin::StashPlugin(QObject* parent)
     : QObject(parent)
 {
+    // Load persisted watched modules.
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    m_watchedModules = s.value(QLatin1String(kModulesKey)).toStringList();
+
+    // Auto-poll: call checkAll() every 30 minutes while the plugin is alive.
+    m_pollTimer.setInterval(30 * 60 * 1000);
+    m_pollTimer.setSingleShot(false);
+    connect(&m_pollTimer, &QTimer::timeout, this, [this]{ checkAll(); });
+    m_pollTimer.start();
 }
 
 void StashPlugin::initLogos(LogosAPI* api)
 {
     logosAPI = api;
-
-    auto* t = new LibStorageTransport();
-    t->start();
-    auto client = std::make_unique<StorageClient>(
-        std::unique_ptr<StorageTransport>(t));
-    m_backend.setStorageClient(std::move(client));
+    // No embedded transport — libstorage.a removed to fix Nim runtime conflict
+    // with storage_module. Storage routing goes through QML (experiment/qml-routing).
 }
 
 QString StashPlugin::initialize()
@@ -41,6 +56,93 @@ QString StashPlugin::download(const QString& cid, const QString& destPath)
     return m_backend.download(cid, destPath) ? queuedJson() : errorJson(QStringLiteral("storage not ready"));
 }
 
+// ── Module watch list ─────────────────────────────────────────────────────────
+
+QString StashPlugin::setWatchedModules(const QString& newlineSeparated)
+{
+    m_watchedModules.clear();
+    const QStringList lines = newlineSeparated.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (const QString& line : lines) {
+        const QString trimmed = line.trimmed();
+        if (!trimmed.isEmpty())
+            m_watchedModules.append(trimmed);
+    }
+    // Persist so the list survives plugin restarts.
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    s.setValue(QLatin1String(kModulesKey), m_watchedModules);
+
+    QJsonArray arr;
+    for (const QString& m : m_watchedModules) arr.append(m);
+    QJsonObject obj;
+    obj[QStringLiteral("modules")] = arr;
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+QString StashPlugin::getWatchedModules() const
+{
+    QJsonArray arr;
+    for (const QString& m : m_watchedModules) arr.append(m);
+    QJsonObject obj;
+    obj[QStringLiteral("modules")] = arr;
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+QString StashPlugin::checkAll()
+{
+    if (!logosAPI)
+        return errorJson(QStringLiteral("not initialized"));
+
+    int checked = 0;
+    int queued  = 0;
+
+    for (const QString& moduleName : std::as_const(m_watchedModules)) {
+        auto* client = logosAPI->getClient(moduleName);
+        if (!client) continue;
+
+        ++checked;
+
+        // Convention: module "foo" registers its backend as "FooBackend".
+        // This lets checkAll() work without knowing module internals.
+        QString objectName = moduleName;
+        objectName[0] = objectName[0].toUpper();
+        objectName += QStringLiteral("Backend");
+
+        // Ask the module if it has a file ready for stash.
+        const QVariant raw = client->invokeRemoteMethod(
+            objectName, QStringLiteral("getFileForStash"));
+        const QJsonObject resp =
+            QJsonDocument::fromJson(raw.toString().toUtf8()).object();
+
+        if (!resp.value(QStringLiteral("ok")).toBool()) continue;
+
+        const QString filePath = resp.value(QStringLiteral("path")).toString();
+        if (filePath.isEmpty()) continue;
+
+        // Capture for the async callback.
+        auto* capturedClient = client;
+        const QString capturedObject = objectName;
+
+        const bool ok = m_backend.uploadWithCallback(
+            filePath,
+            [capturedClient, capturedObject](const QString& cid) {
+                const QString ts = QString::number(QDateTime::currentSecsSinceEpoch());
+                capturedClient->invokeRemoteMethod(
+                    capturedObject,
+                    QStringLiteral("setBackupCid"),
+                    cid, ts);
+            });
+
+        if (ok) ++queued;
+    }
+
+    QJsonObject result;
+    result[QStringLiteral("checked")] = checked;
+    result[QStringLiteral("queued")]  = queued;
+    return QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact));
+}
+
+// ── Status / log / quota ──────────────────────────────────────────────────────
+
 QString StashPlugin::getStatus()
 {
     return m_backend.status();
@@ -57,15 +159,7 @@ QString StashPlugin::getQuota()
     return m_backend.quotaJson();
 }
 
-QString StashPlugin::okJson()
-{
-    return QStringLiteral("{\"ok\":true}");
-}
-
-QString StashPlugin::queuedJson()
-{
-    return QStringLiteral("{\"queued\":true}");
-}
+// ── Private helpers ───────────────────────────────────────────────────────────
 
 QString StashPlugin::errorJson(const QString& msg)
 {
@@ -73,4 +167,9 @@ QString StashPlugin::errorJson(const QString& msg)
     safe.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
     safe.replace(QLatin1Char('"'),  QStringLiteral("\\\""));
     return QStringLiteral("{\"error\":\"") + safe + QStringLiteral("\"}");
+}
+
+QString StashPlugin::queuedJson()
+{
+    return QStringLiteral("{\"queued\":true}");
 }

@@ -1,0 +1,12 @@
+{
+  "name": "stash",
+  "version": "0.1.0",
+  "description": "Lean decentralised storage — drop a file, get a CID back",
+  "author": "Stash",
+  "type": "core",
+  "main": "stash_plugin",
+  "dependencies": [],
+  "category": "storage",
+  "capabilities": [],
+  "icon": ""
+}
