@@ -1,0 +1,5 @@
+{
+  "name": "Stash",
+  "description": "Lean decentralised storage — drop a file, get a CID back",
+  "icon": "icons/app_icon.png"
+}
