@@ -26,6 +26,8 @@ Item {
     property bool   checkBusy:    false        // true while checkAll() is in flight
     property real   checkStarted: 0           // epoch ms when checkBusy was last set
     property bool   modulesPanelOpen: false    // toggle the watched-modules editor
+    property bool   pinningPanelOpen: false    // toggle the pinning config panel
+    property bool   pinningConfigured: false   // true when provider + token are set
     property bool   coreReady:     false       // true once stash core responds to getStatus
     property var    pendingEntries: []         // QML-side log entries (survive backend refresh)
 
@@ -137,7 +139,29 @@ Item {
         onTriggered: root.refresh()
     }
 
-    Component.onCompleted: root.refresh()
+    // Retry reading pinning config until the stash module responds
+    Timer {
+        id: pinningConfigPoller
+        interval: 500
+        repeat: true
+        running: !root.pinningConfigured
+        onTriggered: {
+            if (typeof logos === "undefined" || !logos.callModule) return
+            var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
+            if (cfg && cfg.configured === true) {
+                root.pinningConfigured = true
+                pinningConfigPoller.stop()
+            }
+        }
+    }
+
+    Component.onCompleted: {
+        root.refresh()
+        if (typeof logos !== "undefined" && logos.callModule) {
+            var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
+            if (cfg) root.pinningConfigured = cfg.configured === true
+        }
+    }
 
     // ── Root background ───────────────────────────────────────────────────
 
@@ -345,6 +369,42 @@ Item {
                     onClicked: root.modulesPanelOpen = !root.modulesPanelOpen
                 }
             }
+
+            // Pinning config button (⊕ — green when configured, red when not)
+            Rectangle {
+                width: 36; height: 36
+                radius: 6
+                color: pinBtn.containsMouse ? root.bgSecondary : "transparent"
+                border.color: root.borderColor
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "⊕"
+                    font.pixelSize: 16
+                    color: root.pinningPanelOpen
+                           ? root.accentOrange
+                           : (root.pinningConfigured ? root.successGreen : root.errorRed)
+                }
+
+                MouseArea {
+                    id: pinBtn
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: {
+                        root.pinningPanelOpen = !root.pinningPanelOpen
+                        if (root.pinningPanelOpen && typeof logos !== "undefined" && logos.callModule) {
+                            var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
+                            if (cfg) {
+                                providerCombo.currentIndex = cfg.provider === "kubo" ? 1 : 0
+                                tokenField.text = cfg.token === "***" ? "" : (cfg.token || "")
+                                endpointField.text = cfg.endpoint || ""
+                                root.pinningConfigured = cfg.configured === true
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // ── Watched modules editor (collapsible) ──────────────────────────
@@ -414,6 +474,145 @@ Item {
                         if (typeof logos === "undefined" || !logos.callModule) return
                         logos.callModule("stash", "setWatchedModules", [modulesInput.text])
                         root.modulesPanelOpen = false
+                    }
+                }
+            }
+        }
+
+        // ── Pinning config panel (collapsible) ───────────────────────────
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 6
+            visible: root.pinningPanelOpen
+
+            Text {
+                text: "Pinning Provider"
+                font.pixelSize: 11
+                color: root.textSecondary
+            }
+
+            ComboBox {
+                id: providerCombo
+                Layout.fillWidth: true
+                model: ["Pinata", "Kubo (self-hosted)"]
+                background: Rectangle {
+                    color: root.bgSecondary
+                    border.color: root.borderColor
+                    border.width: 1
+                    radius: 4
+                }
+                contentItem: Text {
+                    leftPadding: 8
+                    text: providerCombo.displayText
+                    font.pixelSize: 12
+                    color: root.textPrimary
+                    verticalAlignment: Text.AlignVCenter
+                }
+                popup.background: Rectangle {
+                    color: root.bgSecondary
+                    border.color: root.borderColor
+                    border.width: 1
+                    radius: 4
+                }
+            }
+
+            Text {
+                text: "Bearer Token"
+                font.pixelSize: 11
+                color: root.textSecondary
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                height: 32
+                radius: 4
+                color: root.bgSecondary
+                border.color: root.borderColor
+                border.width: 1
+
+                TextField {
+                    id: tokenField
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    background: null
+                    color: root.textPrimary
+                    font.pixelSize: 12
+                    echoMode: TextInput.Password
+                    placeholderText: "JWT / API token"
+                    placeholderTextColor: root.textMuted
+                }
+            }
+
+            Text {
+                text: "Node URL"
+                font.pixelSize: 11
+                color: root.textSecondary
+                visible: providerCombo.currentIndex === 1
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                height: 32
+                radius: 4
+                color: root.bgSecondary
+                border.color: root.borderColor
+                border.width: 1
+                visible: providerCombo.currentIndex === 1
+
+                TextField {
+                    id: endpointField
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    background: null
+                    color: root.textPrimary
+                    font.pixelSize: 12
+                    placeholderText: "https://node.example.com"
+                    placeholderTextColor: root.textMuted
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Text {
+                    text: root.pinningConfigured
+                          ? "● Configured"
+                          : "● Not configured — backups will fail"
+                    font.pixelSize: 11
+                    color: root.pinningConfigured ? root.successGreen : root.errorRed
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    width: 60; height: 26
+                    radius: 4
+                    color: pinSaveBtn.containsMouse ? root.accentOrange : root.bgSecondary
+                    border.color: root.borderColor
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Save"
+                        font.pixelSize: 11
+                        color: root.textPrimary
+                    }
+
+                    MouseArea {
+                        id: pinSaveBtn
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: {
+                            if (typeof logos === "undefined" || !logos.callModule) return
+                            var provider = providerCombo.currentIndex === 0 ? "pinata" : "kubo"
+                            var endpoint = endpointField.text.trim()
+                            var token    = tokenField.text.trim()
+                            var res = callModuleParse(logos.callModule("stash", "setPinningConfig",
+                                                                       [provider, endpoint, token]))
+                            if (res && res.ok) {
+                                root.pinningConfigured = true
+                                root.pinningPanelOpen = false
+                            }
+                        }
                     }
                 }
             }

@@ -11,6 +11,8 @@
 #include <QSettings>
 #include <dlfcn.h>
 
+#include "core/PinningClient.h"
+
 #include "core/StorageClient.h"
 #include "cpp/logos_api.h"
 #include "cpp/logos_api_client.h"
@@ -18,6 +20,9 @@
 static constexpr const char* kSettingsOrg  = "logos";
 static constexpr const char* kSettingsApp  = "stash";
 static constexpr const char* kModulesKey   = "watchedModules";
+static constexpr const char* kPinProviderKey = "pinningProvider";
+static constexpr const char* kPinEndpointKey = "pinningEndpoint";
+static constexpr const char* kPinTokenKey    = "pinningToken";
 
 StashPlugin::StashPlugin(QObject* parent)
     : QObject(parent)
@@ -25,12 +30,6 @@ StashPlugin::StashPlugin(QObject* parent)
     // Load persisted watched modules.
     QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
     m_watchedModules = s.value(QLatin1String(kModulesKey)).toStringList();
-
-    // Auto-poll: call checkAll() every 30 minutes while the plugin is alive.
-    m_pollTimer.setInterval(30 * 60 * 1000);
-    m_pollTimer.setSingleShot(false);
-    connect(&m_pollTimer, &QTimer::timeout, this, [this]{ checkAll(); });
-    m_pollTimer.start();
 }
 
 void StashPlugin::initLogos(LogosAPI* api)
@@ -206,8 +205,70 @@ QString StashPlugin::uploadViaIpfs(const QString& filePath)
     if (cid.isEmpty())
         return errorJson(QStringLiteral("ipfs returned empty CID"));
 
+    // ── Online pinning ────────────────────────────────────────────────────
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    const QString providerStr = s.value(QLatin1String(kPinProviderKey)).toString();
+    if (providerStr.isEmpty())
+        return errorJson(QStringLiteral("pinning provider not configured — open Stash settings"));
+
+    const PinningProvider provider = (providerStr == QStringLiteral("pinata"))
+                                     ? PinningProvider::Pinata
+                                     : PinningProvider::Kubo;
+    const QString endpoint = s.value(QLatin1String(kPinEndpointKey)).toString();
+    const QString token    = s.value(QLatin1String(kPinTokenKey)).toString();
+
+    QString pinError;
+    const QString remoteCid = m_pinningClient.pinFile(provider, endpoint, token,
+                                                       filePath, pinError);
+    if (remoteCid.isEmpty())
+        return errorJson(QStringLiteral("pinning failed: ") + pinError);
+
+    // Local ipfs uses CIDv0 (Qm...), Pinata returns CIDv1 (bafk...) — same
+    // content, different encoding. Trust the remote CID as canonical.
     QJsonObject obj;
-    obj[QStringLiteral("cid")] = cid;
+    obj[QStringLiteral("cid")] = remoteCid;
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+// ── Pinning config ────────────────────────────────────────────────────────────
+
+QString StashPlugin::setPinningConfig(const QString& provider,
+                                       const QString& endpoint,
+                                       const QString& token)
+{
+    if (provider != QStringLiteral("pinata") && provider != QStringLiteral("kubo"))
+        return errorJson(QStringLiteral("unknown provider — use \"pinata\" or \"kubo\""));
+
+    if (provider == QStringLiteral("kubo")) {
+        if (endpoint.isEmpty())
+            return errorJson(QStringLiteral("endpoint is required for kubo provider"));
+        if (!endpoint.startsWith(QStringLiteral("http://")) &&
+            !endpoint.startsWith(QStringLiteral("https://")))
+            return errorJson(QStringLiteral("endpoint must start with http:// or https://"));
+    }
+
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    s.setValue(QLatin1String(kPinProviderKey), provider);
+    s.setValue(QLatin1String(kPinEndpointKey), endpoint);
+    s.setValue(QLatin1String(kPinTokenKey),    token);
+
+    QJsonObject obj;
+    obj[QStringLiteral("ok")] = true;
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+QString StashPlugin::getPinningConfig() const
+{
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    const QString provider = s.value(QLatin1String(kPinProviderKey)).toString();
+    const QString endpoint = s.value(QLatin1String(kPinEndpointKey)).toString();
+    const QString token    = s.value(QLatin1String(kPinTokenKey)).toString();
+
+    QJsonObject obj;
+    obj[QStringLiteral("provider")]   = provider;
+    obj[QStringLiteral("endpoint")]   = endpoint;
+    obj[QStringLiteral("token")]      = token.isEmpty() ? QStringLiteral("") : QStringLiteral("***");
+    obj[QStringLiteral("configured")] = !provider.isEmpty() && !token.isEmpty();
     return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
 
