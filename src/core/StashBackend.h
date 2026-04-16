@@ -52,12 +52,14 @@ public:
     // All log entries as a QJsonArray (capped at kMaxLog).
     QJsonArray logEntries() const;
 
+    // Append an entry directly — used by StashPlugin for uploadViaIpfs events.
+    void appendLog(const QString& type, const QString& detail);
+
 signals:
     // Fired for every log event — UI polls getLog() but can also connect here.
     void logEvent(const QString& type, const QString& detail);
 
 private:
-    void appendLog(const QString& type, const QString& detail);
 
     std::unique_ptr<StorageClient> m_client;
 

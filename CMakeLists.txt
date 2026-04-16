@@ -8,7 +8,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 # ── Qt ───────────────────────────────────────────────────────────────────────
-find_package(Qt6 REQUIRED COMPONENTS Core Qml Quick QuickControls2)
+find_package(Qt6 REQUIRED COMPONENTS Core Qml Quick QuickControls2 Network)
 qt_standard_project_setup()
 qt_policy(SET QTP0001 NEW)
 qt_policy(SET QTP0004 NEW)
@@ -49,6 +49,8 @@ set(PLUGIN_SOURCES
     src/core/StashBackend.cpp
     src/core/StorageClient.h
     src/core/StorageClient.cpp
+    src/core/PinningClient.h
+    src/core/PinningClient.cpp
 )
 
 add_library(stash_plugin MODULE ${PLUGIN_SOURCES})
@@ -70,6 +72,7 @@ target_include_directories(stash_plugin PRIVATE
 target_link_libraries(stash_plugin PRIVATE
     Qt6::Core
     Qt6::Qml
+    Qt6::Network
     "${LOGOS_CPP_SDK}/lib/liblogos_sdk.a"
     dl pthread
 )
@@ -115,6 +118,8 @@ add_executable(test_stash_plugin
     src/plugin/StashPlugin.cpp
     src/core/LibStorageTransport.h
     src/core/LibStorageTransport.cpp
+    src/core/PinningClient.h
+    src/core/PinningClient.cpp
     ${TEST_COMMON_SOURCES}
 )
 target_include_directories(test_stash_plugin PRIVATE
@@ -127,6 +132,7 @@ target_include_directories(test_stash_plugin PRIVATE
 )
 target_link_libraries(test_stash_plugin PRIVATE
     ${TEST_COMMON_LIBS}
+    Qt6::Network
     "${LOGOS_STORAGE_DIR}/lib/libstorage.a"
     "${LOGOS_STORAGE_DIR}/lib/libbacktrace.a"
     "${LOGOS_STORAGE_DIR}/lib/libminiupnpc.a"
@@ -163,6 +169,10 @@ install(FILES
     plugins/stash_ui/Main.qml
     plugins/stash_ui/variant
     DESTINATION "${STASH_UI_DIR}"
+)
+install(FILES
+    assets/icons/Stash_sidebar.png
+    DESTINATION "${STASH_UI_DIR}/icons"
 )
 
 find_program(PATCHELF_EXECUTABLE patchelf)

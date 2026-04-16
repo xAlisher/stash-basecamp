@@ -52,9 +52,15 @@ QString PinningClient::pinViaPinata(const QString& token,
     file->setParent(multiPart);
     multiPart->append(filePart);
 
-    // /pinning/pinFileToIPFS pins publicly to the IPFS network (files show
-    // under PUBLIC tab in Pinata and are accessible via public gateways).
-    QNetworkRequest req(QUrl(QStringLiteral("https://api.pinata.cloud/pinning/pinFileToIPFS")));
+    // network=public pins to public IPFS (shows under PUBLIC tab, accessible via any gateway)
+    QHttpPart networkPart;
+    networkPart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                          QStringLiteral("form-data; name=\"network\""));
+    networkPart.setBody(QByteArray("public"));
+    multiPart->append(networkPart);
+
+    // uploads.pinata.cloud/v3/files accepts v3 scoped JWTs (Bearer token).
+    QNetworkRequest req{QUrl(QStringLiteral("https://uploads.pinata.cloud/v3/files"))};
     req.setRawHeader("Authorization", ("Bearer " + token).toUtf8());
 
     QNetworkReply* reply = m_nam->post(req, multiPart);
@@ -85,8 +91,10 @@ QString PinningClient::pinViaPinata(const QString& token,
         return {};
     }
 
+    // Response: {"data":{"cid":"bafk...","name":"...","size":...,...}}
     const QJsonObject obj = QJsonDocument::fromJson(body).object();
-    const QString cid = obj.value(QStringLiteral("IpfsHash")).toString();
+    const QString cid = obj.value(QStringLiteral("data")).toObject()
+                           .value(QStringLiteral("cid")).toString();
     if (cid.isEmpty()) {
         errorOut = QStringLiteral("unexpected response: ") + QString::fromUtf8(body).left(200);
         return {};

@@ -9,5 +9,5 @@
   "dependencies": ["stash"],
   "category": "storage",
   "capabilities": [],
-  "icon": ""
+  "icon": "icons/Stash_sidebar.png"
 }

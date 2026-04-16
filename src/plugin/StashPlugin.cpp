@@ -220,11 +220,17 @@ QString StashPlugin::uploadViaIpfs(const QString& filePath)
     QString pinError;
     const QString remoteCid = m_pinningClient.pinFile(provider, endpoint, token,
                                                        filePath, pinError);
-    if (remoteCid.isEmpty())
+    const QString fname = QFileInfo(filePath).fileName();
+    if (remoteCid.isEmpty()) {
+        m_backend.appendLog(QStringLiteral("error"),
+                            fname + QStringLiteral(": ") + pinError);
         return errorJson(QStringLiteral("pinning failed: ") + pinError);
+    }
 
     // Local ipfs uses CIDv0 (Qm...), Pinata returns CIDv1 (bafk...) — same
     // content, different encoding. Trust the remote CID as canonical.
+    m_backend.appendLog(QStringLiteral("backup_uploaded"),
+                        fname + QStringLiteral(" → ") + remoteCid);
     QJsonObject obj;
     obj[QStringLiteral("cid")] = remoteCid;
     return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
@@ -250,7 +256,9 @@ QString StashPlugin::setPinningConfig(const QString& provider,
     QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
     s.setValue(QLatin1String(kPinProviderKey), provider);
     s.setValue(QLatin1String(kPinEndpointKey), endpoint);
-    s.setValue(QLatin1String(kPinTokenKey),    token);
+    // Empty token means "keep existing" — UI sends empty when user hasn't re-typed the masked value
+    if (!token.isEmpty())
+        s.setValue(QLatin1String(kPinTokenKey), token);
 
     QJsonObject obj;
     obj[QStringLiteral("ok")] = true;

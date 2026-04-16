@@ -3,7 +3,7 @@
   "category": "storage",
   "dependencies": ["stash"],
   "description": "Lean decentralised storage — UI",
-  "icon": "",
+  "icon": "icons/Stash_sidebar.png",
   "main": {},
   "manifestVersion": "0.2.0",
   "name": "stash_ui",
