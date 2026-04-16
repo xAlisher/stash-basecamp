@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantList>
 
 #include "interface.h"
@@ -59,4 +60,5 @@ private:
 
     StashBackend  m_backend;
     QStringList   m_watchedModules;
+    QTimer        m_pollTimer;   // auto-calls checkAll() on interval
 };

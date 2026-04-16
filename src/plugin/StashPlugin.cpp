@@ -21,6 +21,12 @@ StashPlugin::StashPlugin(QObject* parent)
     // Load persisted watched modules.
     QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
     m_watchedModules = s.value(QLatin1String(kModulesKey)).toStringList();
+
+    // Auto-poll: call checkAll() every 30 minutes while the plugin is alive.
+    m_pollTimer.setInterval(30 * 60 * 1000);
+    m_pollTimer.setSingleShot(false);
+    connect(&m_pollTimer, &QTimer::timeout, this, [this]{ checkAll(); });
+    m_pollTimer.start();
 }
 
 void StashPlugin::initLogos(LogosAPI* api)
