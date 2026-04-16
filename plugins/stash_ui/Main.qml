@@ -112,7 +112,7 @@ Item {
 
     function formatTs(ms) {
         var d = new Date(ms)
-        return Qt.formatTime(d, "hh:mm:ss")
+        return Qt.formatDateTime(d, "yyyy-MM-dd hh:mm:ss")
     }
 
     function quotaPercent() {
@@ -282,25 +282,35 @@ Item {
                                 var fileRes = callModuleParse(logos.callModule(mod, "getFileForStash", []))
                                 if (fileRes && fileRes.ok && fileRes.path) {
                                     var upRes = callModuleParse(logos.callModule("stash", "uploadViaIpfs", [fileRes.path]))
+                                    var fname = fileRes.path.split("/").pop()
                                     if (upRes && upRes.cid) {
                                         logos.callModule(mod, "setBackupCid", [upRes.cid, String(Date.now())])
                                         anyQueued = true
                                         root.pendingEntries = root.pendingEntries.concat([{
                                             type: "backup_uploaded",
-                                            detail: upRes.cid,
+                                            module: mod,
+                                            file: fname,
+                                            cid: upRes.cid,
+                                            detail: "[" + mod + "] " + fname + " → " + upRes.cid,
                                             timestamp: Date.now()
                                         }])
                                     } else {
                                         root.pendingEntries = root.pendingEntries.concat([{
                                             type: "error",
-                                            detail: upRes ? upRes.error || JSON.stringify(upRes) : "no response",
+                                            module: mod,
+                                            file: fname,
+                                            cid: "",
+                                            detail: "[" + mod + "] " + (upRes ? upRes.error || JSON.stringify(upRes) : "no response"),
                                             timestamp: Date.now()
                                         }])
                                     }
                                 } else {
                                     root.pendingEntries = root.pendingEntries.concat([{
                                         type: "error",
-                                        detail: mod + ": " + (fileRes ? JSON.stringify(fileRes) : "no response"),
+                                        module: mod,
+                                        file: "",
+                                        cid: "",
+                                        detail: "[" + mod + "] no file returned",
                                         timestamp: Date.now()
                                     }])
                                 }
@@ -430,7 +440,7 @@ Item {
 
             delegate: Rectangle {
                 width: logView.width
-                height: 36
+                height: 52
                 color: root.bgRow
                 radius: 4
 
@@ -449,33 +459,55 @@ Item {
                         font.pixelSize: 14
                         color: root.colorFor(modelData.type)
                         Layout.preferredWidth: 16
+                        Layout.alignment: Qt.AlignVCenter
                     }
 
-                    // Detail text
-                    Text {
-                        text: modelData.detail || modelData.type
-                        font.pixelSize: 12
-                        color: root.textSecondary
-                        elide: Text.ElideMiddle
+                    // Two-line detail block
+                    ColumnLayout {
                         Layout.fillWidth: true
+                        spacing: 2
+
+                        // Top line: timestamp + module
+                        RowLayout {
+                            spacing: 6
+                            Text {
+                                text: root.formatTs(modelData.timestamp)
+                                font.pixelSize: 10
+                                font.family: "monospace"
+                                color: root.textMuted
+                            }
+                            Text {
+                                text: modelData.module || ""
+                                font.pixelSize: 10
+                                font.bold: true
+                                color: root.accentOrange
+                                visible: (modelData.module || "") !== ""
+                            }
+                        }
+
+                        // Bottom line: filename → CID (or error text)
+                        Text {
+                            text: modelData.file
+                                  ? modelData.file + (modelData.cid ? " → " + modelData.cid : "")
+                                  : (modelData.detail || modelData.type)
+                            font.pixelSize: 11
+                            font.family: "monospace"
+                            color: root.colorFor(modelData.type)
+                            elide: Text.ElideMiddle
+                            Layout.fillWidth: true
+                        }
                     }
 
-                    // Timestamp
-                    Text {
-                        text: root.formatTs(modelData.timestamp)
-                        font.pixelSize: 10
-                        color: root.textMuted
-                    }
-
-                    // Copy button — only on rows with a CID
+                    // Copy CID button
                     Rectangle {
-                        visible: root.isCidRow(modelData.type)
+                        visible: (modelData.cid || "") !== ""
                         width: 40
                         height: 22
                         radius: 4
                         color: copyArea.containsMouse ? root.bgSecondary : "transparent"
                         border.color: root.borderColor
                         border.width: 1
+                        Layout.alignment: Qt.AlignVCenter
 
                         Text {
                             anchors.centerIn: parent
@@ -494,8 +526,10 @@ Item {
                             anchors.fill: parent
                             hoverEnabled: true
                             onClicked: {
-                                // Qt clipboard trick via invisible TextEdit
-                                clipHelper.text = modelData.detail
+                                clipHelper.text = root.formatTs(modelData.timestamp)
+                                    + (modelData.module ? " [" + modelData.module + "]" : "")
+                                    + (modelData.file ? " " + modelData.file : "")
+                                    + (modelData.cid ? " → " + modelData.cid : "")
                                 clipHelper.selectAll()
                                 clipHelper.copy()
                                 copyFeedback.restart()
