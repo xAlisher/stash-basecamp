@@ -4,15 +4,23 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSettings>
 
 #include "core/LibStorageTransport.h"
 #include "core/StorageClient.h"
 #include "cpp/logos_api.h"
 #include "cpp/logos_api_client.h"
 
+static constexpr const char* kSettingsOrg  = "logos";
+static constexpr const char* kSettingsApp  = "stash";
+static constexpr const char* kModulesKey   = "watchedModules";
+
 StashPlugin::StashPlugin(QObject* parent)
     : QObject(parent)
 {
+    // Load persisted watched modules.
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    m_watchedModules = s.value(QLatin1String(kModulesKey)).toStringList();
 }
 
 void StashPlugin::initLogos(LogosAPI* api)
@@ -58,6 +66,10 @@ QString StashPlugin::setWatchedModules(const QString& newlineSeparated)
         if (!trimmed.isEmpty())
             m_watchedModules.append(trimmed);
     }
+    // Persist so the list survives plugin restarts.
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    s.setValue(QLatin1String(kModulesKey), m_watchedModules);
+
     QJsonArray arr;
     for (const QString& m : m_watchedModules) arr.append(m);
     QJsonObject obj;

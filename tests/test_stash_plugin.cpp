@@ -2,8 +2,16 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QSettings>
+#include <QStandardPaths>
 
 #include "plugin/StashPlugin.h"
+
+static void clearStashSettings()
+{
+    QSettings s{QLatin1String("logos"), QLatin1String("stash")};
+    s.remove(QLatin1String("watchedModules"));
+}
 
 // initLogos() is never called in these tests — no real storage node starts.
 // All tests exercise the plugin's JSON contract and guard paths.
@@ -58,6 +66,7 @@ private:
 void TestStashPlugin::initTestCase()
 {
     QStandardPaths::setTestModeEnabled(true);
+    clearStashSettings();  // ensure clean slate for watched-modules tests
 }
 
 void TestStashPlugin::testGetStatusOfflineBeforeInit()
@@ -135,6 +144,7 @@ void TestStashPlugin::testSetWatchedModulesIgnoresBlankLines()
 
 void TestStashPlugin::testGetWatchedModulesEmptyInitially()
 {
+    clearStashSettings();  // other tests may have persisted modules
     StashPlugin p;
     auto result = parseObj(p.getWatchedModules());
     QVERIFY(result.contains(QStringLiteral("modules")));
