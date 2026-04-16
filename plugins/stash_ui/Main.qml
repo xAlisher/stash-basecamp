@@ -24,6 +24,7 @@ Item {
     property int    quotaUsed:    0
     property int    quotaTotal:   0
     property bool   checkBusy:    false        // true while checkAll() is in flight
+    property real   checkStarted: 0           // epoch ms when checkBusy was last set
     property bool   modulesPanelOpen: false    // toggle the watched-modules editor
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -32,7 +33,10 @@ Item {
     function callModuleParse(raw) {
         try {
             var tmp = JSON.parse(raw)
-            return (typeof tmp === 'string') ? JSON.parse(tmp) : tmp
+            if (typeof tmp === 'string') {
+                try { return JSON.parse(tmp) } catch(e) { return tmp }
+            }
+            return tmp
         } catch(e) { return null }
     }
 
@@ -51,6 +55,10 @@ Item {
                 if (last === "uploaded" || last === "backup_uploaded" || last === "error")
                     root.checkBusy = false
             }
+            // Safety timeout: 30 s with no terminal log entry → clear spinner
+            if (root.checkBusy && root.checkStarted > 0 &&
+                    (Date.now() - root.checkStarted) > 30000)
+                root.checkBusy = false
         }
 
         var q = callModuleParse(logos.callModule("stash", "getQuota", []))
@@ -235,10 +243,15 @@ Item {
                     onClicked: {
                         if (typeof logos === "undefined" || !logos.callModule) return
                         root.checkBusy = true
-                        var res = callModuleParse(logos.callModule("stash", "checkAll", []))
-                        // Clear immediately if nothing was queued (no log entry will arrive)
-                        // or on error. Only stay busy when uploads are actually in flight.
-                        if (!res || res.error || res.queued === 0) root.checkBusy = false
+                        root.checkStarted = Date.now()
+                        try {
+                            var res = callModuleParse(logos.callModule("stash", "checkAll", []))
+                            // Clear immediately if nothing was queued (no log entry will arrive)
+                            // or on error. Only stay busy when uploads are actually in flight.
+                            if (!res || res.error || !res.queued) root.checkBusy = false
+                        } catch(e) {
+                            root.checkBusy = false
+                        }
                     }
                 }
             }

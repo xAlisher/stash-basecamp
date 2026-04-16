@@ -1,6 +1,13 @@
 {
+  "author": "Stash",
+  "category": "storage",
+  "dependencies": ["stash"],
+  "description": "Lean decentralised storage — UI",
+  "icon": "",
+  "main": {},
+  "manifestVersion": "0.2.0",
   "name": "stash_ui",
-  "version": "0.1.0",
   "type": "ui_qml",
+  "version": "0.1.0",
   "view": "Main.qml"
 }

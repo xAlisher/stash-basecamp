@@ -1,6 +1,17 @@
 {
+  "author": "Stash",
+  "category": "storage",
+  "dependencies": [],
+  "description": "Lean decentralised storage — drop a file, get a CID back",
+  "icon": "",
+  "main": {
+    "linux-amd64":       "stash_plugin.so",
+    "linux-amd64-dev":   "stash_plugin.so",
+    "linux-x86_64-dev":  "stash_plugin.so",
+    "darwin-arm64":      "stash_plugin.dylib"
+  },
+  "manifestVersion": "0.2.0",
   "name": "stash",
-  "version": "0.1.0",
   "type": "core",
-  "entry": "stash_plugin.so"
+  "version": "0.1.0"
 }

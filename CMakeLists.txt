@@ -142,9 +142,9 @@ set(STASH_UI_DIR     "${LOGOS_APP_DATA}/plugins/stash_ui")
 
 install(CODE "
     set(_modules_dir \"\\$ENV{DESTDIR}${LOGOS_APP_DATA}/modules\")
-    file(GLOB _old \"\\${_modules_dir}/stash.*\")
-    foreach(_dir \\${_old})
-        file(REMOVE_RECURSE \"\\${_dir}\")
+    file(GLOB _old \"\${_modules_dir}/stash.*\")
+    foreach(_dir \${_old})
+        file(REMOVE_RECURSE \"\${_dir}\")
     endforeach()
 ")
 
@@ -162,15 +162,15 @@ if(PATCHELF_EXECUTABLE)
     install(CODE "
         set(_plugin \"${STASH_MODULE_DIR}/stash_plugin.so\")
         set(_build_so \"${CMAKE_BINARY_DIR}/stash_plugin.so\")
-        if(EXISTS \"\\${_plugin}\")
+        if(EXISTS \"\${_plugin}\")
             execute_process(
-                COMMAND bash -c \"ldd '\\${_build_so}' | grep nix/store | awk '{print \\\\\\$3}' | xargs -I{} dirname {} | sort -u | tr '\\\\n' ':' | sed 's/:$//'\"
+                COMMAND bash -c \"ldd '\${_build_so}' | grep nix/store | awk '{print \\\$3}' | xargs -I{} dirname {} | sort -u | tr '\\n' ':' | sed 's/:$//'\"\
                 OUTPUT_VARIABLE _nix_paths
                 OUTPUT_STRIP_TRAILING_WHITESPACE
             )
-            set(_rpath \"\\\\\\$ORIGIN:\\${_nix_paths}:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu\")
+            set(_rpath \"\\\$ORIGIN:\${_nix_paths}:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu\")
             execute_process(
-                COMMAND ${PATCHELF_EXECUTABLE} --set-rpath \"\\${_rpath}\" \"\\${_plugin}\"
+                COMMAND ${PATCHELF_EXECUTABLE} --set-rpath \"\${_rpath}\" \"\${_plugin}\"
             )
             message(STATUS \"Patched RUNPATH on stash_plugin.so\")
         endif()
@@ -180,14 +180,14 @@ endif()
 # Mirror to LogosBasecamp
 install(CODE "
     set(_mod_src \"${STASH_MODULE_DIR}\")
-    set(_mod_dst \"\\$ENV{HOME}/.local/share/Logos/LogosBasecamp/modules/stash\")
-    file(COPY \"\\${_mod_src}/\" DESTINATION \"\\${_mod_dst}\")
+    set(_mod_dst \"\$ENV{HOME}/.local/share/Logos/LogosBasecamp/modules/stash\")
+    file(COPY \"\${_mod_src}/\" DESTINATION \"\${_mod_dst}\")
 
     set(_ui_src \"${STASH_UI_DIR}\")
-    set(_ui_dst \"\\$ENV{HOME}/.local/share/Logos/LogosBasecamp/plugins/stash_ui\")
-    file(GLOB _ui_files \"\\${_ui_src}/*\")
-    foreach(_f \\${_ui_files})
-        file(COPY \"\\${_f}\" DESTINATION \"\\${_ui_dst}\")
+    set(_ui_dst \"\$ENV{HOME}/.local/share/Logos/LogosBasecamp/plugins/stash_ui\")
+    file(GLOB _ui_files \"\${_ui_src}/*\")
+    foreach(_f \${_ui_files})
+        file(COPY \"\${_f}\" DESTINATION \"\${_ui_dst}\")
     endforeach()
     message(STATUS \"Mirror to LogosBasecamp complete\")
 ")
