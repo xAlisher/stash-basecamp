@@ -41,8 +41,6 @@ set(PLUGIN_SOURCES
     src/plugin/StashPlugin.cpp
     src/core/StashBackend.h
     src/core/StashBackend.cpp
-    src/core/LibStorageTransport.h
-    src/core/LibStorageTransport.cpp
     src/core/StorageClient.h
     src/core/StorageClient.cpp
 )
@@ -57,7 +55,6 @@ set_target_properties(stash_plugin PROPERTIES
 
 target_include_directories(stash_plugin PRIVATE
     src
-    "${LOGOS_STORAGE_DIR}/include"
     "${LOGOS_LIBLOGOS_HEADERS}"
     "${LOGOS_CPP_SDK}/include"
     "${LOGOS_CPP_SDK}/include/cpp"
@@ -67,10 +64,7 @@ target_include_directories(stash_plugin PRIVATE
 target_link_libraries(stash_plugin PRIVATE
     Qt6::Core
     Qt6::Qml
-    "${LOGOS_STORAGE_DIR}/lib/libstorage.a"
-    "${LOGOS_STORAGE_DIR}/lib/libbacktrace.a"
-    "${LOGOS_STORAGE_DIR}/lib/libminiupnpc.a"
-    "${LOGOS_STORAGE_DIR}/lib/libnatpmp.a"
+    "${LOGOS_CPP_SDK}/lib/liblogos_sdk.a"
     dl pthread
 )
 
@@ -149,11 +143,18 @@ install(CODE "
 ")
 
 install(TARGETS stash_plugin LIBRARY DESTINATION "${STASH_MODULE_DIR}")
-install(FILES modules/stash/manifest.json DESTINATION "${STASH_MODULE_DIR}")
+install(FILES
+    modules/stash/manifest.json
+    modules/stash/metadata.json
+    modules/stash/plugin_metadata.json
+    modules/stash/variant
+    DESTINATION "${STASH_MODULE_DIR}"
+)
 install(FILES
     plugins/stash_ui/manifest.json
     plugins/stash_ui/metadata.json
     plugins/stash_ui/Main.qml
+    plugins/stash_ui/variant
     DESTINATION "${STASH_UI_DIR}"
 )
 
@@ -168,7 +169,8 @@ if(PATCHELF_EXECUTABLE)
                 OUTPUT_VARIABLE _nix_paths
                 OUTPUT_STRIP_TRAILING_WHITESPACE
             )
-            set(_rpath \"\\\$ORIGIN:\${_nix_paths}:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu\")
+            set(_qt_lib \"\$ENV{HOME}/Qt/6.9.3/gcc_64/lib\")
+            set(_rpath \"\\\$ORIGIN:\${_nix_paths}:\${_qt_lib}:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu\")
             execute_process(
                 COMMAND ${PATCHELF_EXECUTABLE} --set-rpath \"\${_rpath}\" \"\${_plugin}\"
             )

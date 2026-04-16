@@ -1,7 +1,7 @@
 {
   "author": "Stash",
   "category": "storage",
-  "dependencies": ["stash"],
+  "dependencies": [],
   "description": "Lean decentralised storage — UI",
   "icon": "",
   "main": {},

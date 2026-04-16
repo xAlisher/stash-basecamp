@@ -26,6 +26,8 @@ Item {
     property bool   checkBusy:    false        // true while checkAll() is in flight
     property real   checkStarted: 0           // epoch ms when checkBusy was last set
     property bool   modulesPanelOpen: false    // toggle the watched-modules editor
+    property string storageProbe:  "—"         // QML-routing experiment: raw response from storage_module
+    property bool   coreReady:     false       // true once stash core responds to getStatus
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -44,7 +46,13 @@ Item {
         if (typeof logos === "undefined" || !logos.callModule) return
 
         var st = callModuleParse(logos.callModule("stash", "getStatus", []))
-        if (st !== null) nodeStatus = typeof st === 'string' ? st : JSON.stringify(st)
+        if (st !== null) {
+            root.coreReady = true
+            nodeStatus = typeof st === 'string' ? st : JSON.stringify(st)
+        } else {
+            root.coreReady = false
+            nodeStatus = "offline"
+        }
 
         var logRaw = callModuleParse(logos.callModule("stash", "getLog", []))
         if (Array.isArray(logRaw)) {
@@ -66,6 +74,11 @@ Item {
             quotaUsed  = q.used
             quotaTotal = q.total
         }
+
+        // QML-routing experiment: can we reach storage_module from third-party QML?
+        // If this returns anything other than null/timeout, tokens work in this context.
+        var sr = logos.callModule("storage_module", "getStatus", [])
+        root.storageProbe = (sr !== null && sr !== undefined && sr !== "") ? sr : "null/empty"
     }
 
     function iconFor(type) {
@@ -171,6 +184,42 @@ Item {
                 font.pixelSize: 12
                 color: root.textSecondary
                 leftPadding: 6
+            }
+        }
+
+        // ── Core offline banner ───────────────────────────────────────────
+        Rectangle {
+            Layout.fillWidth: true
+            height: 28
+            radius: 4
+            color: "#2D1A00"
+            border.color: root.warningYellow
+            border.width: 1
+            visible: !root.coreReady
+
+            Text {
+                anchors.centerIn: parent
+                text: "Stash core not loaded — storage unavailable"
+                font.pixelSize: 11
+                color: root.warningYellow
+            }
+        }
+
+        // ── QML routing experiment probe ──────────────────────────────────
+        RowLayout {
+            Layout.fillWidth: true
+            Text {
+                text: "storage_module probe:"
+                font.pixelSize: 10
+                color: root.textMuted
+            }
+            Text {
+                text: root.storageProbe
+                font.pixelSize: 10
+                color: root.storageProbe === "null/empty" ? root.errorRed : root.successGreen
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                leftPadding: 4
             }
         }
 

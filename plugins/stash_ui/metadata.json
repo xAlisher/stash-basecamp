@@ -6,7 +6,7 @@
   "type": "ui_qml",
   "pluginType": "qml",
   "view": "Main.qml",
-  "dependencies": ["stash"],
+  "dependencies": [],
   "category": "storage",
   "capabilities": [],
   "icon": ""

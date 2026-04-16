@@ -6,7 +6,6 @@
 #include <QJsonObject>
 #include <QSettings>
 
-#include "core/LibStorageTransport.h"
 #include "core/StorageClient.h"
 #include "cpp/logos_api.h"
 #include "cpp/logos_api_client.h"
@@ -32,12 +31,8 @@ StashPlugin::StashPlugin(QObject* parent)
 void StashPlugin::initLogos(LogosAPI* api)
 {
     logosAPI = api;
-
-    auto* t = new LibStorageTransport();
-    t->start();
-    auto client = std::make_unique<StorageClient>(
-        std::unique_ptr<StorageTransport>(t));
-    m_backend.setStorageClient(std::move(client));
+    // No embedded transport — libstorage.a removed to fix Nim runtime conflict
+    // with storage_module. Storage routing goes through QML (experiment/qml-routing).
 }
 
 QString StashPlugin::initialize()
