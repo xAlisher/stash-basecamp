@@ -27,6 +27,7 @@ Item {
     property real   checkStarted: 0           // epoch ms when checkBusy was last set
     property bool   modulesPanelOpen: false    // toggle the watched-modules editor
     property bool   coreReady:     false       // true once stash core responds to getStatus
+    property var    pendingEntries: []         // QML-side log entries (survive backend refresh)
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ Item {
     }
 
     function isCidRow(type) {
-        return type === "uploaded" || type === "backup_uploaded"
+        return true  // copy button on every row
     }
 
     function formatTs(ms) {
@@ -270,10 +271,54 @@ Item {
                         root.checkBusy = true
                         root.checkStarted = Date.now()
                         try {
-                            var res = callModuleParse(logos.callModule("stash", "checkAll", []))
-                            // Clear immediately if nothing was queued (no log entry will arrive)
-                            // or on error. Only stay busy when uploads are actually in flight.
-                            if (!res || res.error || !res.queued) root.checkBusy = false
+                            // QML workaround: call getFileForStash on each watched module
+                            // directly from QML bridge (main process has tokens for all loaded
+                            // modules — bypasses C++ cross-module token bootstrap gap).
+                            var watched = callModuleParse(logos.callModule("stash", "getWatchedModules", []))
+                            var modules = (watched && Array.isArray(watched.modules)) ? watched.modules : []
+                            var anyQueued = false
+                            for (var i = 0; i < modules.length; i++) {
+                                var mod = modules[i]
+                                var fileRes = callModuleParse(logos.callModule(mod, "getFileForStash", []))
+                                if (fileRes && fileRes.ok && fileRes.path) {
+                                    // Only attempt upload when storage node is ready
+                                    if (root.nodeStatus === "ready") {
+                                        var fileUrl = "file://" + fileRes.path
+                                        var upRes = callModuleParse(logos.callModule("storage_module", "uploadUrl", [fileUrl, 1048576]))
+                                        if (upRes && (upRes.cid || upRes.id || upRes.queued || upRes.ok)) {
+                                            var cid = upRes.cid || upRes.id || ""
+                                            if (cid) {
+                                                logos.callModule(mod, "setBackupCid", [cid, String(Date.now())])
+                                            }
+                                            anyQueued = true
+                                            root.pendingEntries = root.pendingEntries.concat([{
+                                                type: "backup_uploaded",
+                                                detail: cid || fileRes.path,
+                                                timestamp: Date.now()
+                                            }])
+                                        } else {
+                                            root.pendingEntries = root.pendingEntries.concat([{
+                                                type: "error",
+                                                detail: "upload failed: " + (upRes ? JSON.stringify(upRes) : "null"),
+                                                timestamp: Date.now()
+                                            }])
+                                        }
+                                    } else {
+                                        root.pendingEntries = root.pendingEntries.concat([{
+                                            type: "offline",
+                                            detail: fileRes.path,
+                                            timestamp: Date.now()
+                                        }])
+                                    }
+                                } else {
+                                    root.pendingEntries = root.pendingEntries.concat([{
+                                        type: "error",
+                                        detail: mod + ": " + (fileRes ? JSON.stringify(fileRes) : "no response"),
+                                        timestamp: Date.now()
+                                    }])
+                                }
+                            }
+                            if (!anyQueued) root.checkBusy = false
                         } catch(e) {
                             root.checkBusy = false
                         }
@@ -390,7 +435,7 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            model: root.logItems
+            model: root.pendingEntries.concat(root.logItems)
             spacing: 2
 
             // Auto-scroll to bottom on new entries
@@ -476,7 +521,7 @@ Item {
             // Empty state
             Text {
                 anchors.centerIn: parent
-                visible: root.logItems.length === 0
+                visible: root.logItems.length === 0 && root.pendingEntries.length === 0
                 text: "No activity yet"
                 font.pixelSize: 13
                 color: root.textMuted
