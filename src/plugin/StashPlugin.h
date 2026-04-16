@@ -42,6 +42,9 @@ public:
     // Returns {"checked":N,"queued":M} or {"error":"..."}.
     Q_INVOKABLE QString checkAll();
 
+    // Upload a file via local IPFS daemon. Returns {"cid":"..."} or {"error":"..."}.
+    Q_INVOKABLE QString uploadViaIpfs(const QString& filePath);
+
     // "ready" | "starting" | "offline"
     Q_INVOKABLE QString getStatus();
 

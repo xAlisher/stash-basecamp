@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QSettings>
 
 #include "core/StorageClient.h"
@@ -139,6 +140,37 @@ QString StashPlugin::checkAll()
     result[QStringLiteral("checked")] = checked;
     result[QStringLiteral("queued")]  = queued;
     return QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact));
+}
+
+// ── IPFS upload ───────────────────────────────────────────────────────────────
+
+QString StashPlugin::uploadViaIpfs(const QString& filePath)
+{
+    if (filePath.isEmpty())
+        return errorJson(QStringLiteral("filePath is empty"));
+
+    QProcess proc;
+    proc.start(QStringLiteral("ipfs"),
+               {QStringLiteral("add"), QStringLiteral("--quieter"), filePath});
+
+    if (!proc.waitForStarted(3000))
+        return errorJson(QStringLiteral("ipfs not found — install IPFS and start the daemon"));
+
+    if (!proc.waitForFinished(60000))
+        return errorJson(QStringLiteral("ipfs timed out"));
+
+    if (proc.exitCode() != 0) {
+        const QString err = QString::fromUtf8(proc.readAllStandardError()).trimmed();
+        return errorJson(err.isEmpty() ? QStringLiteral("ipfs exited with error") : err);
+    }
+
+    const QString cid = QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
+    if (cid.isEmpty())
+        return errorJson(QStringLiteral("ipfs returned empty CID"));
+
+    QJsonObject obj;
+    obj[QStringLiteral("cid")] = cid;
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
 
 // ── Status / log / quota ──────────────────────────────────────────────────────

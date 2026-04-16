@@ -281,32 +281,19 @@ Item {
                                 var mod = modules[i]
                                 var fileRes = callModuleParse(logos.callModule(mod, "getFileForStash", []))
                                 if (fileRes && fileRes.ok && fileRes.path) {
-                                    // Only attempt upload when storage node is ready
-                                    if (root.nodeStatus === "ready") {
-                                        var fileUrl = "file://" + fileRes.path
-                                        var upRes = callModuleParse(logos.callModule("storage_module", "uploadUrl", [fileUrl, 1048576]))
-                                        if (upRes && (upRes.cid || upRes.id || upRes.queued || upRes.ok)) {
-                                            var cid = upRes.cid || upRes.id || ""
-                                            if (cid) {
-                                                logos.callModule(mod, "setBackupCid", [cid, String(Date.now())])
-                                            }
-                                            anyQueued = true
-                                            root.pendingEntries = root.pendingEntries.concat([{
-                                                type: "backup_uploaded",
-                                                detail: cid || fileRes.path,
-                                                timestamp: Date.now()
-                                            }])
-                                        } else {
-                                            root.pendingEntries = root.pendingEntries.concat([{
-                                                type: "error",
-                                                detail: "upload failed: " + (upRes ? JSON.stringify(upRes) : "null"),
-                                                timestamp: Date.now()
-                                            }])
-                                        }
+                                    var upRes = callModuleParse(logos.callModule("stash", "uploadViaIpfs", [fileRes.path]))
+                                    if (upRes && upRes.cid) {
+                                        logos.callModule(mod, "setBackupCid", [upRes.cid, String(Date.now())])
+                                        anyQueued = true
+                                        root.pendingEntries = root.pendingEntries.concat([{
+                                            type: "backup_uploaded",
+                                            detail: upRes.cid,
+                                            timestamp: Date.now()
+                                        }])
                                     } else {
                                         root.pendingEntries = root.pendingEntries.concat([{
-                                            type: "offline",
-                                            detail: fileRes.path,
+                                            type: "error",
+                                            detail: upRes ? upRes.error || JSON.stringify(upRes) : "no response",
                                             timestamp: Date.now()
                                         }])
                                     }
