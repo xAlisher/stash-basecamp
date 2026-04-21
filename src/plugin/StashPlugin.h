@@ -41,6 +41,14 @@ public:
     // Returns {"ready":bool,"starting":bool,"peerId":"...","spr":"..."}.
     Q_INVOKABLE QString getStorageInfo();
 
+    // Set the active upload transport: "logos" | "kubo" | "pinata".
+    // upload() and checkAll() will route through the selected transport.
+    // Returns {"ok":true} or {"error":"..."}.
+    Q_INVOKABLE QString setActiveTransport(const QString& transport);
+
+    // Returns {"transport":"logos"|"kubo"|"pinata"}.
+    Q_INVOKABLE QString getActiveTransport() const;
+
     // ── Module watch list ────────────────────────────────────────────────────
     // Newline-separated module names. Stash will call getFileForStash() on each.
     Q_INVOKABLE QString setWatchedModules(const QString& newlineSeparated);

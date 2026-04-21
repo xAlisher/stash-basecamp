@@ -24,7 +24,8 @@ static constexpr const char* kSettingsApp    = "stash";
 static constexpr const char* kModulesKey     = "watchedModules";
 static constexpr const char* kPinProviderKey = "pinningProvider";
 static constexpr const char* kPinEndpointKey = "pinningEndpoint";
-static constexpr const char* kPinTokenKey    = "pinningToken";
+static constexpr const char* kPinTokenKey       = "pinningToken";
+static constexpr const char* kActiveTransportKey = "activeTransport";
 static constexpr int         kLogosChunkSize = 65536;
 
 StashPlugin::StashPlugin(QObject* parent)
@@ -161,6 +162,13 @@ QString StashPlugin::upload(const QString& filePath)
 {
     if (filePath.isEmpty())
         return errorJson(QStringLiteral("filePath is empty"));
+
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    const QString transport = s.value(QLatin1String(kActiveTransportKey),
+                                      QStringLiteral("kubo")).toString();
+    if (transport == QStringLiteral("logos"))
+        return uploadViaLogos(filePath);
+
     return m_backend.upload(filePath) ? queuedJson() : errorJson(QStringLiteral("storage not ready"));
 }
 
@@ -307,6 +315,35 @@ QString StashPlugin::getStorageInfo()
             obj[QStringLiteral("addrs")] = addrs;
         }
     }
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+// ── Transport selection ───────────────────────────────────────────────────────
+
+QString StashPlugin::setActiveTransport(const QString& transport)
+{
+    static const QStringList kValid = {
+        QStringLiteral("logos"), QStringLiteral("kubo"), QStringLiteral("pinata")
+    };
+    if (!kValid.contains(transport))
+        return errorJson(QStringLiteral("unknown transport — use \"logos\", \"kubo\", or \"pinata\""));
+
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    s.setValue(QLatin1String(kActiveTransportKey), transport);
+
+    QJsonObject obj;
+    obj[QStringLiteral("ok")] = true;
+    obj[QStringLiteral("transport")] = transport;
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+QString StashPlugin::getActiveTransport() const
+{
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    const QString transport = s.value(QLatin1String(kActiveTransportKey),
+                                      QStringLiteral("kubo")).toString();
+    QJsonObject obj;
+    obj[QStringLiteral("transport")] = transport;
     return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
 
