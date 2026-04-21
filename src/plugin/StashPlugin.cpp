@@ -3,6 +3,8 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QStandardPaths>
+#include <QTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -12,17 +14,18 @@
 #include <dlfcn.h>
 
 #include "core/PinningClient.h"
-
 #include "core/StorageClient.h"
+#include "storage_module_api.h"
 #include "cpp/logos_api.h"
 #include "cpp/logos_api_client.h"
 
-static constexpr const char* kSettingsOrg  = "logos";
-static constexpr const char* kSettingsApp  = "stash";
-static constexpr const char* kModulesKey   = "watchedModules";
+static constexpr const char* kSettingsOrg    = "logos";
+static constexpr const char* kSettingsApp    = "stash";
+static constexpr const char* kModulesKey     = "watchedModules";
 static constexpr const char* kPinProviderKey = "pinningProvider";
 static constexpr const char* kPinEndpointKey = "pinningEndpoint";
 static constexpr const char* kPinTokenKey    = "pinningToken";
+static constexpr int         kLogosChunkSize = 65536;
 
 StashPlugin::StashPlugin(QObject* parent)
     : QObject(parent)
@@ -35,8 +38,118 @@ StashPlugin::StashPlugin(QObject* parent)
 void StashPlugin::initLogos(LogosAPI* api)
 {
     logosAPI = api;
-    // No embedded transport — libstorage.a removed to fix Nim runtime conflict
-    // with storage_module. Storage routing goes through QML (experiment/qml-routing).
+
+    // Construct typed storage wrapper (cheap — just getClient + stores ptr).
+    // storage_module is declared in metadata.json dependencies, so its QRO
+    // source is published before initLogos is called.
+    m_logosStorage = new StorageModule(api);
+    subscribeLogosStorageEvents();
+
+    // Defer init() + start() — both are sync IPC that would block initLogos.
+    // start() may take ~30 s (libstorage discovery + transport bind) without
+    // the detached-start fork of storage_module.
+    m_logosStorageStarting = true;
+    QTimer::singleShot(0, this, [this]() { initLogosStorage(); });
+}
+
+// ── Logos storage init ────────────────────────────────────────────────────────
+
+void StashPlugin::subscribeLogosStorageEvents()
+{
+    if (!m_logosStorage) return;
+
+    // storageStart: [bool ok, QString msg]
+    m_logosStorage->on("storageStart", [this](const QVariantList& d) {
+        const bool ok = !d.isEmpty() && d[0].toBool();
+        if (ok) {
+            m_logosStorageReady   = true;
+            m_logosStorageStarting = false;
+            m_backend.appendLog("logos_storage", "storage_module ready");
+        } else {
+            const QString msg = d.size() > 1 ? d[1].toString() : QString();
+            m_backend.appendLog("error", "storageStart failed: " + msg);
+        }
+    });
+
+    // storageUploadDone: [bool ok, QString sessionId, QString cid]
+    // Some builds send [bool ok, QString cid] — handle both layouts.
+    m_logosStorage->on("storageUploadDone", [this](const QVariantList& d) {
+        const bool ok = !d.isEmpty() && d[0].toBool();
+        if (!ok) {
+            const QString msg = d.size() > 1 ? d[1].toString() : "unknown error";
+            m_backend.appendLog("error", "Logos upload failed: " + msg);
+            // Clear all pending — single-in-flight contract.
+            m_pendingLogosUploads.clear();
+            return;
+        }
+        const QString second = d.size() > 1 ? d[1].toString() : QString();
+        const QString third  = d.size() > 2 ? d[2].toString() : QString();
+        const QString sessionId = !third.isEmpty() ? second : QString();
+        const QString cid       = !third.isEmpty() ? third  : second;
+        handleLogosUploadDone(sessionId, cid);
+    });
+}
+
+void StashPlugin::initLogosStorage()
+{
+    if (m_logosStorageReady || !m_logosStorage) return;
+
+    const QString dataDir =
+        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
+        + QStringLiteral("/stash/storage");
+    QDir().mkpath(dataDir);
+
+    QJsonObject cfg;
+    cfg[QStringLiteral("data-dir")] = dataDir;
+    const QString cfgJson =
+        QString::fromUtf8(QJsonDocument(cfg).toJson(QJsonDocument::Compact));
+
+    if (!m_logosStorage->init(cfgJson)) {
+        m_logosStorageStarting = false;
+        m_backend.appendLog("error", "Logos storage init() failed");
+        return;
+    }
+
+    // start() returns immediately with the detached-start fork of
+    // storage_module; without that fork it blocks ~30 s. In both cases,
+    // flip m_logosStorageReady once start() returns true — the storageStart
+    // event will also fire and is a no-op if we're already marked ready.
+    if (!m_logosStorage->start()) {
+        m_logosStorageStarting = false;
+        m_backend.appendLog("error", "Logos storage start() failed");
+        return;
+    }
+
+    m_logosStorageReady   = true;
+    m_logosStorageStarting = false;
+    m_backend.appendLog("logos_storage", "storage_module started");
+}
+
+void StashPlugin::handleLogosUploadDone(const QString& sessionId, const QString& cid)
+{
+    QString filePath;
+    if (!sessionId.isEmpty() && m_pendingLogosUploads.contains(sessionId)) {
+        filePath = m_pendingLogosUploads.take(sessionId);
+    } else if (!m_pendingLogosUploads.isEmpty()) {
+        // Fallback: grab first entry.  Handles:
+        //  a) empty sessionId in event ([ok, cid] 2-element payload)
+        //  b) stored under empty key because uploadUrl() LogosResult.value
+        //     was empty cross-process (broken serialization path)
+        auto it = m_pendingLogosUploads.begin();
+        filePath = it.value();
+        m_pendingLogosUploads.erase(it);
+    }
+
+    const QString fname = filePath.isEmpty()
+        ? cid.left(12) : QFileInfo(filePath).fileName();
+
+    if (cid.isEmpty()) {
+        m_backend.appendLog("error", "Logos upload done but no CID");
+        return;
+    }
+
+    m_backend.appendLog("logos_uploaded", fname + " \u2192 " + cid);
+    qInfo() << "StashPlugin: Logos upload done cid=" << cid << "file=" << fname;
 }
 
 QString StashPlugin::initialize()
@@ -143,6 +256,58 @@ QString StashPlugin::checkAll()
     result[QStringLiteral("checked")] = checked;
     result[QStringLiteral("queued")]  = queued;
     return QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact));
+}
+
+// ── Logos IPC upload ──────────────────────────────────────────────────────────
+
+QString StashPlugin::uploadViaLogos(const QString& filePath)
+{
+    if (filePath.isEmpty())
+        return errorJson(QStringLiteral("filePath is empty"));
+
+    if (!m_logosStorage)
+        return errorJson(QStringLiteral("Logos storage not initialized"));
+
+    if (m_logosStorageStarting)
+        return errorJson(QStringLiteral("Logos storage is starting — try again in a moment"));
+
+    if (!m_logosStorageReady)
+        return errorJson(QStringLiteral("Logos storage not ready"));
+
+    if (!QFileInfo::exists(filePath))
+        return errorJson(QStringLiteral("File not found: ") + filePath);
+
+    LogosResult r = m_logosStorage->uploadUrl(filePath, kLogosChunkSize);
+    if (!r.success)
+        return errorJson(QStringLiteral("Upload rejected: ") + r.error.toString());
+
+    const QString sessionId = r.value.toString();
+    m_pendingLogosUploads[sessionId] = filePath;
+    m_backend.appendLog("logos_upload_queued",
+                        QFileInfo(filePath).fileName()
+                        + QStringLiteral(" (session=") + sessionId.left(8) + QStringLiteral("…)"));
+
+    return queuedJson();
+}
+
+QString StashPlugin::getStorageInfo()
+{
+    QJsonObject obj;
+    obj[QStringLiteral("ready")]    = m_logosStorageReady;
+    obj[QStringLiteral("starting")] = m_logosStorageStarting;
+
+    if (m_logosStorage && m_logosStorageReady) {
+        LogosResult r = m_logosStorage->debug();
+        if (r.success) {
+            obj[QStringLiteral("peerId")] = r.getString("id");
+            obj[QStringLiteral("spr")]    = r.getString("spr");
+            QJsonArray addrs;
+            const auto addrList = r.getValue<QStringList>("addrs");
+            for (const QString& a : addrList) addrs.append(a);
+            obj[QStringLiteral("addrs")] = addrs;
+        }
+    }
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
 
 // ── IPFS upload ───────────────────────────────────────────────────────────────

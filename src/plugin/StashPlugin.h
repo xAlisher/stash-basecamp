@@ -1,13 +1,17 @@
 #pragma once
 
+#include <QMap>
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantList>
 
 #include "interface.h"
 #include "core/StashBackend.h"
 #include "core/PinningClient.h"
+
+class StorageModule;  // from src/generated/storage_module_api.h
 
 class StashPlugin : public QObject, public PluginInterface
 {
@@ -29,6 +33,13 @@ public:
 
     // Download a CID to a local path. Returns {"queued":true} or {"error":"..."}.
     Q_INVOKABLE QString download(const QString& cid, const QString& destPath);
+
+    // Upload via Logos storage_module IPC (typed SDK).
+    // Returns {"queued":true} if accepted, {"error":"..."} if not ready or rejected.
+    Q_INVOKABLE QString uploadViaLogos(const QString& filePath);
+
+    // Returns {"ready":bool,"starting":bool,"peerId":"...","spr":"..."}.
+    Q_INVOKABLE QString getStorageInfo();
 
     // ── Module watch list ────────────────────────────────────────────────────
     // Newline-separated module names. Stash will call getFileForStash() on each.
@@ -75,7 +86,18 @@ private:
     static QString errorJson(const QString& msg);
     static QString queuedJson();
 
+    // Logos storage_module IPC (typed SDK)
+    void initLogosStorage();
+    void subscribeLogosStorageEvents();
+    void handleLogosUploadDone(const QString& sessionId, const QString& cid);
+
     StashBackend   m_backend;
     QStringList    m_watchedModules;
     PinningClient  m_pinningClient;
+
+    // Logos storage state
+    StorageModule*            m_logosStorage       = nullptr;
+    bool                      m_logosStorageReady  = false;
+    bool                      m_logosStorageStarting = false;
+    QMap<QString, QString>    m_pendingLogosUploads; // sessionId → filePath
 };
