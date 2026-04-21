@@ -2,7 +2,7 @@
   "IID": "org.logos.StashModuleInterface",
   "author": "Stash",
   "category": "storage",
-  "dependencies": [],
+  "dependencies": ["storage_module"],
   "description": "Lean decentralised storage — drop a file, get a CID back",
   "main": "stash_plugin",
   "name": "stash",

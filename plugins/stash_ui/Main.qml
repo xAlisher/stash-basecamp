@@ -218,15 +218,20 @@ Item {
                     onClicked: {
                         root.pinningPanelOpen = !root.pinningPanelOpen
                         if (root.pinningPanelOpen && typeof logos !== "undefined" && logos.callModule) {
-                            var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
-                            if (cfg) {
-                                providerCombo.currentIndex = cfg.provider === "kubo" ? 1 : 0
-                                tokenField.text = ""
-                                tokenField.placeholderText = cfg.token === "***"
-                                    ? "Token saved — leave blank to keep"
-                                    : "JWT / API token"
-                                endpointField.text = cfg.endpoint || ""
-                                root.pinningConfigured = cfg.configured === true
+                            var at = callModuleParse(logos.callModule("stash", "getActiveTransport", []))
+                            if (at && at.transport === "logos") {
+                                providerCombo.currentIndex = 2
+                            } else {
+                                var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
+                                if (cfg) {
+                                    providerCombo.currentIndex = cfg.provider === "kubo" ? 1 : 0
+                                    tokenField.text = ""
+                                    tokenField.placeholderText = cfg.token === "***"
+                                        ? "Token saved — leave blank to keep"
+                                        : "JWT / API token"
+                                    endpointField.text = cfg.endpoint || ""
+                                    root.pinningConfigured = cfg.configured === true
+                                }
                             }
                         }
                     }
@@ -386,7 +391,7 @@ Item {
             ComboBox {
                 id: providerCombo
                 Layout.fillWidth: true
-                model: ["Pinata", "Kubo (self-hosted)"]
+                model: ["Pinata", "Kubo (self-hosted)", "Logos Network"]
                 background: Rectangle {
                     color: root.bgSecondary
                     border.color: root.borderColor
@@ -424,6 +429,7 @@ Item {
                 text: "Bearer Token"
                 font.pixelSize: 11
                 color: root.textSecondary
+                visible: providerCombo.currentIndex !== 2
             }
 
             Rectangle {
@@ -433,6 +439,7 @@ Item {
                 color: root.bgSecondary
                 border.color: root.borderColor
                 border.width: 1
+                visible: providerCombo.currentIndex !== 2
 
                 TextField {
                     id: tokenField
@@ -479,9 +486,13 @@ Item {
                 Layout.fillWidth: true
 
                 Text {
-                    text: root.pinningConfigured ? "● Configured" : "● Not configured — backups will fail"
+                    text: providerCombo.currentIndex === 2
+                          ? (root.logosStorageReady ? "● Logos ready" : root.logosStorageStarting ? "● Logos starting…" : "● Logos offline — init failed")
+                          : (root.pinningConfigured ? "● Configured" : "● Not configured — backups will fail")
                     font.pixelSize: 11
-                    color: root.pinningConfigured ? root.successGreen : root.errorRed
+                    color: providerCombo.currentIndex === 2
+                           ? (root.logosStorageReady ? root.successGreen : root.logosStorageStarting ? root.warningYellow : root.errorRed)
+                           : (root.pinningConfigured ? root.successGreen : root.errorRed)
                     Layout.fillWidth: true
                 }
 
@@ -505,14 +516,28 @@ Item {
                         hoverEnabled: true
                         onClicked: {
                             if (typeof logos === "undefined" || !logos.callModule) return
-                            var provider = providerCombo.currentIndex === 0 ? "pinata" : "kubo"
-                            var endpoint = endpointField.text.trim()
-                            var token    = tokenField.text.trim()
-                            var res = callModuleParse(logos.callModule("stash", "setPinningConfig",
-                                                                       [provider, endpoint, token]))
-                            if (res && res.ok) {
-                                root.pinningConfigured = true
-                                root.pinningPanelOpen = false
+                            if (providerCombo.currentIndex === 2) {
+                                // Logos Network — set active transport
+                                var tres = callModuleParse(
+                                    logos.callModule("stash", "setActiveTransport", ["logos"]))
+                                if (tres && tres.ok) {
+                                    root.activeTransport = "logos"
+                                    root.pinningConfigured = true
+                                    root.pinningPanelOpen = false
+                                }
+                            } else {
+                                var provider = providerCombo.currentIndex === 0 ? "pinata" : "kubo"
+                                var endpoint = endpointField.text.trim()
+                                var token    = tokenField.text.trim()
+                                var res = callModuleParse(logos.callModule("stash", "setPinningConfig",
+                                                                           [provider, endpoint, token]))
+                                if (res && res.ok) {
+                                    logos.callModule("stash", "setActiveTransport",
+                                                     [provider === "pinata" ? "pinata" : "kubo"])
+                                    root.activeTransport = provider
+                                    root.pinningConfigured = true
+                                    root.pinningPanelOpen = false
+                                }
                             }
                         }
                     }
