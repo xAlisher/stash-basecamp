@@ -18,10 +18,6 @@ logos_module(
         src/core/StorageClient.cpp
         src/core/PinningClient.h
         src/core/PinningClient.cpp
-        src/core/LibStorageTransport.h
-        src/core/LibStorageTransport.cpp
         src/plugin/StashPlugin.h
         src/plugin/StashPlugin.cpp
-    EXTERNAL_LIBS
-        logos_storage_nim
 )

@@ -10,33 +10,23 @@
 
   "nix": {
     "packages": {
-      "build": ["libsodium", "pkg-config"],
-      "runtime": ["libsodium"]
+      "build": [],
+      "runtime": []
     },
-    "external_libraries": [
-      { "name": "logos_storage_nim", "vendor_path": "third_party/logos-storage-nim" }
-    ],
+    "external_libraries": [],
     "cmake": {
       "find_packages": ["Qt6 COMPONENTS Core Qml Network"],
       "extra_sources": [
         "src/core/StashBackend.cpp",
         "src/core/StorageClient.cpp",
         "src/core/PinningClient.cpp",
-        "src/core/LibStorageTransport.cpp",
         "src/plugin/StashPlugin.cpp"
       ],
       "extra_include_dirs": [
-        "src",
-        "third_party/logos-storage-nim/include"
+        "src"
       ],
       "extra_link_libraries": [
-        "Qt6::Network",
-        "${LOGOS_STORAGE_NIM_LIB}/libstorage.a",
-        "${LOGOS_STORAGE_NIM_LIB}/libbacktrace.a",
-        "${LOGOS_STORAGE_NIM_LIB}/libminiupnpc.a",
-        "${LOGOS_STORAGE_NIM_LIB}/libnatpmp.a",
-        "dl",
-        "pthread"
+        "Qt6::Network"
       ]
     }
   }
