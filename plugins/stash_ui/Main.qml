@@ -362,6 +362,18 @@ Item {
                     border.width: 1
                     radius: 4
                 }
+                delegate: ItemDelegate {
+                    width: providerCombo.width
+                    contentItem: Text {
+                        text: modelData
+                        font.pixelSize: 12
+                        color: root.textPrimary
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        color: hovered ? root.borderColor : root.bgSecondary
+                    }
+                }
             }
 
             Text {
