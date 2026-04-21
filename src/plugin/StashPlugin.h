@@ -3,11 +3,11 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
-#include <QTimer>
 #include <QVariantList>
 
 #include "interface.h"
 #include "core/StashBackend.h"
+#include "core/PinningClient.h"
 
 class StashPlugin : public QObject, public PluginInterface
 {
@@ -42,8 +42,19 @@ public:
     // Returns {"checked":N,"queued":M} or {"error":"..."}.
     Q_INVOKABLE QString checkAll();
 
-    // Upload a file via local IPFS daemon. Returns {"cid":"..."} or {"error":"..."}.
+    // Upload a file via local IPFS daemon, then pin it online.
+    // Returns {"cid":"..."} or {"error":"..."}.
     Q_INVOKABLE QString uploadViaIpfs(const QString& filePath);
+
+    // Configure the pinning provider. provider: "pinata"|"kubo".
+    // Returns {"ok":true} or {"error":"..."}.
+    Q_INVOKABLE QString setPinningConfig(const QString& provider,
+                                         const QString& endpoint,
+                                         const QString& token);
+
+    // Returns {"provider":"...","endpoint":"...","configured":true|false}.
+    // Token is masked as "***" if non-empty.
+    Q_INVOKABLE QString getPinningConfig() const;
 
     // "ready" | "starting" | "offline"
     Q_INVOKABLE QString getStatus();
@@ -64,7 +75,7 @@ private:
     static QString errorJson(const QString& msg);
     static QString queuedJson();
 
-    StashBackend  m_backend;
-    QStringList   m_watchedModules;
-    QTimer        m_pollTimer;   // auto-calls checkAll() on interval
+    StashBackend   m_backend;
+    QStringList    m_watchedModules;
+    PinningClient  m_pinningClient;
 };
