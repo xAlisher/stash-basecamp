@@ -93,7 +93,8 @@ void StashPlugin::subscribeLogosStorageEvents()
 
 void StashPlugin::initLogosStorage()
 {
-    if (m_logosStorageReady || !m_logosStorage) return;
+    if (m_logosStorageReady || m_logosStorageInitializing || !m_logosStorage) return;
+    m_logosStorageInitializing = true;
 
     const QString dataDir =
         QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
@@ -105,25 +106,27 @@ void StashPlugin::initLogosStorage()
     const QString cfgJson =
         QString::fromUtf8(QJsonDocument(cfg).toJson(QJsonDocument::Compact));
 
-    if (!m_logosStorage->init(cfgJson)) {
-        m_logosStorageStarting = false;
-        m_backend.appendLog("error", "Logos storage init() failed");
-        return;
-    }
-
-    // start() returns immediately with the detached-start fork of
-    // storage_module; without that fork it blocks ~30 s. In both cases,
-    // flip m_logosStorageReady once start() returns true — the storageStart
-    // event will also fire and is a no-op if we're already marked ready.
-    if (!m_logosStorage->start()) {
-        m_logosStorageStarting = false;
-        m_backend.appendLog("error", "Logos storage start() failed");
-        return;
-    }
-
-    m_logosStorageReady   = true;
-    m_logosStorageStarting = false;
-    m_backend.appendLog("logos_storage", "storage_module started");
+    // initAsync returns immediately — no nested event loop, no spinner.
+    m_logosStorage->initAsync(cfgJson, [this](bool ok) {
+        if (!ok) {
+            m_logosStorageStarting    = false;
+            m_logosStorageInitializing = false;
+            m_backend.appendLog("error", "Logos storage init() failed");
+            return;
+        }
+        // startAsync returns immediately — storage_module starts in background.
+        // Actual readiness is signalled by the "storageStart" event (subscribed
+        // in subscribeLogosStorageEvents), which sets m_logosStorageReady.
+        m_logosStorage->startAsync([this](bool accepted) {
+            m_logosStorageInitializing = false;
+            if (!accepted) {
+                m_logosStorageStarting = false;
+                m_backend.appendLog("error", "Logos storage start() rejected");
+            }
+            // If accepted, wait for the "storageStart" event to confirm readiness.
+            // m_logosStorageReady is set there, not here.
+        });
+    });
 }
 
 void StashPlugin::handleLogosUploadDone(const QString& sessionId, const QString& cid)

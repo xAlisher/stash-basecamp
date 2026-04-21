@@ -104,8 +104,9 @@ private:
     PinningClient  m_pinningClient;
 
     // Logos storage state
-    StorageModule*            m_logosStorage       = nullptr;
-    bool                      m_logosStorageReady  = false;
-    bool                      m_logosStorageStarting = false;
-    QMap<QString, QString>    m_pendingLogosUploads; // sessionId → filePath
+    StorageModule*            m_logosStorage          = nullptr;
+    bool                      m_logosStorageReady     = false;
+    bool                      m_logosStorageStarting  = false;
+    bool                      m_logosStorageInitializing = false; // async init in flight
+    QMap<QString, QString>    m_pendingLogosUploads;  // sessionId → filePath
 };
