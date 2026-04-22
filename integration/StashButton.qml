@@ -4,8 +4,11 @@
 //   StashButton { moduleName: "notes" }
 //
 // Your C++ plugin must expose (Q_INVOKABLE):
-//   QString getFileForStash()                          → {"ok":true,"path":"..."}
+//   QString getFileForStash()                            → {"ok":true,"path":"..."}
 //   QString setBackupCid(QString cid, QString timestamp) → {"ok":true}
+//
+// For Logos Storage transport, StashButton stays busy and polls
+// stash.getLatestLogosResult() until the CID appears, then calls setBackupCid.
 //
 // See docs/stash-button-integration.md for the full integration guide.
 
@@ -35,11 +38,45 @@ Item {
     implicitHeight: 36
 
     // ── Internal ─────────────────────────────────────────────────────────────
+    property string _pendingFname: ""
+
     function _parse(raw) {
         try {
             var tmp = JSON.parse(raw)
             return (typeof tmp === "string") ? JSON.parse(tmp) : tmp
         } catch(e) { return null }
+    }
+
+    // Poll stash.getLatestLogosResult() every 2s until our file's CID appears.
+    // Stash cannot call back into the module after an incoming IPC call (QRO
+    // back-call times out), so the module is responsible for fetching the result.
+    Timer {
+        id: _cidPollTimer
+        interval: 2000
+        repeat: true
+        onTriggered: {
+            if (typeof logos === "undefined" || !logos.callModule) return
+            var res = root._parse(logos.callModule("stash", "getLatestLogosResult", []))
+            if (!res || !res.cid || res.file !== root._pendingFname) return
+            logos.callModule(root.moduleName, "setBackupCid", [res.cid, res.ts])
+            root._pendingFname = ""
+            root.busy = false
+            _cidPollTimer.stop()
+            _cidTimeoutTimer.stop()
+        }
+    }
+
+    Timer {
+        id: _cidTimeoutTimer
+        interval: 120000
+        repeat: false
+        onTriggered: {
+            if (root._pendingFname === "") return
+            root.lastError = "Logos Storage: timed out waiting for CID"
+            root._pendingFname = ""
+            root.busy = false
+            _cidPollTimer.stop()
+        }
     }
 
     function trigger() {
@@ -62,11 +99,17 @@ Item {
         var transport = atRes && atRes.transport ? atRes.transport : "kubo"
 
         if (transport === "logos") {
-            // Async — stash calls setBackupCid internally when the upload settles
-            var qRes = _parse(logos.callModule("stash", "upload", [fileRes.path]))
-            if (!qRes || qRes.error)
+            var fname = fileRes.path.split("/").pop()
+            var qRes  = _parse(logos.callModule("stash", "upload", [fileRes.path, root.moduleName]))
+            if (!qRes || qRes.error) {
                 root.lastError = qRes ? (qRes.error || "upload failed") : "upload IPC error"
-            root.busy = false
+                root.busy = false
+                return
+            }
+            // Stay busy — poll stash until the CID appears, then call setBackupCid.
+            root._pendingFname = fname
+            _cidPollTimer.restart()
+            _cidTimeoutTimer.restart()
             return
         }
 

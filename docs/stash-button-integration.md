@@ -12,7 +12,7 @@ A `StashButton` QML component that:
 - Matches the style used in **Immutable Notes** (shovel icon + "Stash" label)
 - Reads the active transport from the Stash module automatically
 - Shows a busy/spinner state while the upload is in progress
-- Calls `setBackupCid` on your module when the CID is available
+- Calls `setBackupCid` on your module when the CID is available (all transports)
 
 ---
 
@@ -121,8 +121,12 @@ StashButton.trigger()
     │       → {"transport":"logos" | "kubo" | "pinata"}
     │
     ├─ [logos transport]
-    │   └─ logos.callModule("stash", "upload", [path])
-    │           → {"ok":true}   (async — stash calls setBackupCid internally)
+    │   ├─ logos.callModule("stash", "upload", [path, moduleName])
+    │   │       → {"queued":true}
+    │   │
+    │   └─ StashButton polls stash.getLatestLogosResult() every 2s
+    │           → {"file":"...","cid":"...","ts":"..."}
+    │           → logos.callModule(moduleName, "setBackupCid", [cid, ts])
     │
     └─ [kubo / pinata transport]
         ├─ logos.callModule("stash", "uploadViaIpfs", [path])
@@ -130,12 +134,44 @@ StashButton.trigger()
         └─ logos.callModule(moduleName, "setBackupCid", [cid, timestamp])
 ```
 
-### Logos Storage transport — async note
+### Logos Storage transport — async delivery
 
 When the active transport is **Logos Storage**, the upload is asynchronous.
-`StashButton` fires the upload and returns immediately (busy clears). Stash
-calls `setBackupCid` on your module when the upload settles (typically a few
-seconds). You do not need to poll for this.
+`StashButton` stays busy and polls `stash.getLatestLogosResult()` every 2 s
+until the CID for the queued file appears, then calls `setBackupCid` on your
+module and clears busy. Timeout: 2 minutes.
+
+**`moduleName` is required.** If empty, the upload proceeds but `setBackupCid`
+is never called (no CID recorded on your module).
+
+> **Why polling instead of a callback?** The Logos QRO framework cannot
+> back-call into a module that is currently handling an inbound IPC call
+> (`requestObject` times out). Polling `getLatestLogosResult()` from the
+> caller's side is the reliable alternative.
+> See `ipc-back-call-use-poll-push` in basecamp-skills for details.
+
+---
+
+## Activity log entries
+
+When your module triggers an upload via Logos Storage, Stash automatically
+appends these entries to its activity log (visible in the Stash panel):
+
+```
+[HH:MM:SS] <moduleName>: <filename>           ← file received from your module
+[HH:MM:SS] Logos Storage: uploading <filename> ← upload starting
+[HH:MM:SS] Logos Storage: <filename> → <cid>  ← upload complete
+```
+
+For example, with `moduleName: "keycard"`:
+```
+[14:03:11] keycard: keycard-backup-2026-04-22.bin
+[14:03:11] Logos Storage: uploading keycard-backup-2026-04-22.bin
+[14:03:32] Logos Storage: keycard-backup-2026-04-22.bin → zDvZ...
+```
+
+No extra code needed — these entries are logged by Stash as long as
+`moduleName` is passed to `upload()`, which `StashButton` does automatically.
 
 ---
 
