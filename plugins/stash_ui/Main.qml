@@ -759,7 +759,6 @@ Item {
                             selectByMouse: true
                             selectedTextColor: root.bgPrimary
                             selectionColor: root.textSecondary
-                            background: null
                         }
                     }
                 }
