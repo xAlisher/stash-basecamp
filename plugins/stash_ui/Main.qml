@@ -29,9 +29,6 @@ Item {
     property string logosStoragePeerId:   ""
     property int    logSeenCount:         0
 
-    // Watched modules list model
-    ListModel { id: watchedModulesModel }
-
     // ── Helpers ───────────────────────────────────────────────────────────
 
     function callModuleParse(raw) {
@@ -74,16 +71,6 @@ Item {
         if (root.logosStorageReady)    return root.successGreen
         if (root.logosStorageStarting) return root.warningYellow
         return root.errorRed
-    }
-
-    function refreshModulesList() {
-        if (typeof logos === "undefined" || !logos.callModule) return
-        var res = callModuleParse(logos.callModule("stash", "getWatchedModules", []))
-        if (res && Array.isArray(res.modules)) {
-            watchedModulesModel.clear()
-            for (var i = 0; i < res.modules.length; i++)
-                watchedModulesModel.append({ name: res.modules[i] })
-        }
     }
 
     function refresh() {
@@ -134,7 +121,6 @@ Item {
 
     Component.onCompleted: {
         root.refresh()
-        root.refreshModulesList()
     }
 
     // ── Root background ───────────────────────────────────────────────────
@@ -246,8 +232,6 @@ Item {
                     onClicked: {
                         root.settingsPanelOpen  = !root.settingsPanelOpen
                         root.transportPopupOpen = false
-                        if (root.settingsPanelOpen)
-                            root.refreshModulesList()
                     }
                 }
             }
@@ -361,105 +345,11 @@ Item {
                 anchors { top: parent.top; left: parent.left; right: parent.right; margins: 10 }
                 spacing: 8
 
-                Text {
-                    text: "Watched modules"
-                    font.pixelSize: 11
-                    color: root.textSecondary
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 72
-                    radius: 4
-                    color: root.bgPrimary
-                    border.color: root.borderColor
-                    border.width: 1
-
-                    ScrollView {
-                        anchors.fill: parent
-                        anchors.margins: 4
-
-                        TextArea {
-                            id: modulesInput
-                            background: null
-                            color: root.textPrimary
-                            font.pixelSize: 12
-                            font.family: "monospace"
-                            wrapMode: TextArea.NoWrap
-                            placeholderText: "notes\nkeycard"
-                            placeholderTextColor: root.textMuted
-
-                            Component.onCompleted: {
-                                if (typeof logos !== "undefined" && logos.callModule) {
-                                    var res = callModuleParse(logos.callModule("stash", "getWatchedModules", []))
-                                    if (res && Array.isArray(res.modules))
-                                        text = res.modules.join("\n")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 6
-
-                    Item { Layout.fillWidth: true }
-
-                    Rectangle {
-                        width: 64; height: 26
-                        radius: 4
-                        color: cancelBtn.containsMouse ? Qt.rgba(0.22,0.22,0.22,1) : "transparent"
-                        border.color: root.borderColor; border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Cancel"
-                            font.pixelSize: 11
-                            color: root.textSecondary
-                        }
-                        MouseArea {
-                            id: cancelBtn
-                            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: root.settingsPanelOpen = false
-                        }
-                    }
-
-                    Rectangle {
-                        width: 64; height: 26
-                        radius: 4
-                        color: saveModBtn.containsMouse ? "#CC4000" : root.accentOrange
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Save"
-                            font.pixelSize: 11
-                            color: root.textPrimary
-                        }
-                        MouseArea {
-                            id: saveModBtn
-                            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (typeof logos === "undefined" || !logos.callModule) return
-                                logos.callModule("stash", "setWatchedModules", [modulesInput.text])
-                                root.settingsPanelOpen = false
-                                root.refreshModulesList()
-                            }
-                        }
-                    }
-                }
-
                 // Pinning config (kubo/pinata only)
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 6
                     visible: root.activeTransport !== "logos"
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        height: 1
-                        color: root.borderColor
-                    }
 
                     Text {
                         text: "Pinning config"
@@ -535,23 +425,57 @@ Item {
         }
 
         // ── Main content: Modules + Logs ──────────────────────────────────
-        RowLayout {
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 12
 
-            // ── Modules column ────────────────────────────────────────────
+            // ── Modules column (1/4) ──────────────────────────────────────
             ColumnLayout {
-                Layout.preferredWidth: 200
-                Layout.minimumWidth: 160
-                Layout.fillHeight: true
+                id: modulesCol
+                anchors { top: parent.top; bottom: parent.bottom; left: parent.left }
+                width: Math.floor(parent.width * 0.25) - 6
                 spacing: 6
 
-                Text {
-                    text: "Modules"
-                    font.pixelSize: 13
-                    font.bold: true
-                    color: root.textPrimary
+                RowLayout {
+                    width: parent.width
+                    spacing: 4
+
+                    Text {
+                        text: "Modules"
+                        font.pixelSize: 13
+                        font.bold: true
+                        color: root.textPrimary
+                        Layout.fillWidth: true
+                    }
+
+                    // Save button — same style as copy button in logs
+                    Rectangle {
+                        width: 26; height: 26
+                        radius: 4
+                        color: modSaveArea.containsMouse ? root.bgSecondary : "transparent"
+                        border.color: modSaveArea.containsMouse ? root.borderColor : "transparent"
+                        border.width: 1
+                        opacity: modSaveArea.containsMouse ? 1.0 : 0.5
+                        Behavior on opacity { NumberAnimation { duration: 150 } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "↓"
+                            font.pixelSize: 14
+                            color: root.textSecondary
+                        }
+
+                        MouseArea {
+                            id: modSaveArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (typeof logos === "undefined" || !logos.callModule) return
+                                logos.callModule("stash", "setWatchedModules", [modulesInput.text])
+                            }
+                        }
+                    }
                 }
 
                 Rectangle {
@@ -563,90 +487,35 @@ Item {
                     border.width: 1
                     clip: true
 
-                    // Empty state
-                    Text {
-                        anchors.centerIn: parent
-                        visible: watchedModulesModel.count === 0
-                        text: "No modules\nwatched"
-                        horizontalAlignment: Text.AlignHCenter
-                        color: root.textMuted
-                        font.pixelSize: 11
-                    }
+                    ScrollView {
+                        anchors.fill: parent
+                        anchors.margins: 8
 
-                    ListView {
-                        id: moduleListView
-                        anchors { fill: parent; topMargin: 4; bottomMargin: 4 }
-                        clip: true
-                        model: watchedModulesModel
-                        spacing: 2
+                        TextArea {
+                            id: modulesInput
+                            color: root.textPrimary
+                            font.pixelSize: 12
+                            font.family: "monospace"
+                            wrapMode: TextArea.NoWrap
+                            placeholderText: "notes\nkeycard"
+                            placeholderTextColor: root.textMuted
+                            background: null
 
-                        delegate: Rectangle {
-                            required property string name
-                            required property int index
-                            width: moduleListView.width
-                            height: 36
-                            color: moduleRowArea.containsMouse ? root.bgActive : "transparent"
-                            radius: 4
-
-                            RowLayout {
-                                anchors { fill: parent; leftMargin: 10; rightMargin: 6 }
-                                spacing: 6
-
-                                Text {
-                                    text: name
-                                    font.pixelSize: 12
-                                    color: root.textPrimary
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
+                            Component.onCompleted: {
+                                if (typeof logos !== "undefined" && logos.callModule) {
+                                    var res = callModuleParse(logos.callModule("stash", "getWatchedModules", []))
+                                    if (res && Array.isArray(res.modules))
+                                        text = res.modules.join("\n")
                                 }
-
-                                // Backup button
-                                Rectangle {
-                                    width: 26; height: 26
-                                    radius: 4
-                                    color: backupBtnArea.containsMouse
-                                           ? Qt.rgba(1, 0.314, 0, 0.2) : "transparent"
-                                    border.color: backupBtnArea.containsMouse
-                                                  ? root.accentOrange : "transparent"
-                                    border.width: 1
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "⬆"
-                                        font.pixelSize: 12
-                                        color: backupBtnArea.containsMouse
-                                               ? root.accentOrange : root.textMuted
-                                    }
-
-                                    MouseArea {
-                                        id: backupBtnArea
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            if (typeof logos === "undefined" || !logos.callModule) return
-                                            logos.callModule("stash", "checkAll", [])
-                                        }
-                                    }
-                                }
-                            }
-
-                            MouseArea {
-                                id: moduleRowArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                // Pass through clicks to children
-                                onClicked: { }
                             }
                         }
                     }
                 }
             }
 
-            // ── Logs column ───────────────────────────────────────────────
+            // ── Logs column (3/4) ─────────────────────────────────────────
             ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+                anchors { top: parent.top; bottom: parent.bottom; left: modulesCol.right; leftMargin: 12; right: parent.right }
                 spacing: 6
 
                 RowLayout {
