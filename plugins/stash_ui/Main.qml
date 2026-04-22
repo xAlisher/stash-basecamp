@@ -209,8 +209,9 @@ Item {
                 }
             }
 
-            // Gear icon
+            // Gear icon — hidden for Logos Storage (no config needed)
             Rectangle {
+                visible: root.activeTransport !== "logos"
                 width: 28; height: 28
                 radius: 6
                 color: gearArea.containsMouse ? root.bgSecondary : "transparent"
@@ -322,6 +323,8 @@ Item {
                                 if (res && res.ok) {
                                     root.activeTransport = modelData.value
                                     root.transportPopupOpen = false
+                                    if (modelData.value === "logos")
+                                        root.settingsPanelOpen = false
                                 }
                             }
                         }
