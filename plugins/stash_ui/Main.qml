@@ -391,7 +391,7 @@ Item {
             ComboBox {
                 id: providerCombo
                 Layout.fillWidth: true
-                model: ["Pinata", "Kubo (self-hosted)", "Logos Network"]
+                model: ["Pinata", "Kubo (self-hosted)", "Logos Storage"]
                 background: Rectangle {
                     color: root.bgSecondary
                     border.color: root.borderColor
@@ -487,7 +487,7 @@ Item {
 
                 Text {
                     text: providerCombo.currentIndex === 2
-                          ? (root.logosStorageReady ? "● Logos ready" : root.logosStorageStarting ? "● Logos starting…" : "● Logos offline — init failed")
+                          ? (root.logosStorageReady ? "● Logos Storage ready" : root.logosStorageStarting ? "● Logos Storage starting…" : "● Logos Storage — init failed")
                           : (root.pinningConfigured ? "● Configured" : "● Not configured — backups will fail")
                     font.pixelSize: 11
                     color: providerCombo.currentIndex === 2
@@ -517,7 +517,7 @@ Item {
                         onClicked: {
                             if (typeof logos === "undefined" || !logos.callModule) return
                             if (providerCombo.currentIndex === 2) {
-                                // Logos Network — set active transport
+                                // Logos Storage — set active transport
                                 var tres = callModuleParse(
                                     logos.callModule("stash", "setActiveTransport", ["logos"]))
                                 if (tres && tres.ok) {
@@ -661,10 +661,11 @@ Item {
 
             property alias logModel: logListView.model
 
-            TextEdit { id: clipHelper; visible: false }
+            // visible:false prevents selectAll()/copy() on Linux — keep rendered but invisible
+            TextEdit { id: clipHelper; opacity: 0; width: 0; height: 0 }
 
             function copyAllToClipboard() {
-                var text = ""
+                var text = "# stash log\n"
                 for (var i = 0; i < logModel.count; i++) {
                     var e = logModel.get(i)
                     text += e.ts + " " + e.msg + "\n"

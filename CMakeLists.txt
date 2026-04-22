@@ -21,6 +21,7 @@ logos_module(
         src/core/PinningClient.cpp
         src/plugin/StashPlugin.h
         src/plugin/StashPlugin.cpp
+        src/generated/storage_module_api.cpp
     INCLUDE_DIRS
         src
         src/generated
