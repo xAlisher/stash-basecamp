@@ -650,7 +650,7 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: Qt.openUrlExternally(Qt.resolvedUrl("stash-button-integration.md"))
+                    onClicked: Qt.openUrlExternally("https://github.com/xAlisher/stash-basecamp/blob/main/docs/stash-button-integration.md")
                 }
             }
 
