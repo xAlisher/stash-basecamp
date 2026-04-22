@@ -80,7 +80,7 @@ void StashPlugin::subscribeLogosStorageEvents()
         if (ok) {
             m_logosStorageReady   = true;
             m_logosStorageStarting = false;
-            m_backend.appendLog("logos_storage", "storage_module ready");
+            m_backend.appendLog("logos_storage", "storage_module: storageStart event");
         } else {
             const QString msg = d.size() > 1 ? d[1].toString() : QString();
             m_backend.appendLog("error", "storageStart failed: " + msg);
@@ -239,8 +239,14 @@ QString StashPlugin::upload(const QString& filePath, const QString& callerModule
     QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
     const QString transport = s.value(QLatin1String(kActiveTransportKey),
                                       QStringLiteral("kubo")).toString();
-    if (transport == QStringLiteral("logos"))
+    if (transport == QStringLiteral("logos")) {
+        const QString label = callerModule.isEmpty()
+            ? QStringLiteral("upload")
+            : callerModule;
+        m_backend.appendLog(QStringLiteral("info"),
+            label + QStringLiteral(": ") + QFileInfo(filePath).fileName());
         return queueViaLogos(filePath);
+    }
 
     return m_backend.upload(filePath) ? queuedJson() : errorJson(QStringLiteral("storage not ready"));
 }
@@ -392,6 +398,8 @@ QString StashPlugin::queueViaLogos(const QString& filePath)
             return;
         }
 
+        m_backend.appendLog(QStringLiteral("logos_storage"),
+                            QStringLiteral("Logos Storage: uploading ") + fname);
         doChunkedUpload(filePath, fname);
     });
 
