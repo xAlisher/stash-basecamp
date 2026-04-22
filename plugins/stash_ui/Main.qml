@@ -173,7 +173,8 @@ Item {
 
                 Row {
                     id: pillRow
-                    anchors.centerIn: parent
+                    x: 10
+                    anchors.verticalCenter: parent.verticalCenter
                     spacing: 6
 
                     Rectangle {
