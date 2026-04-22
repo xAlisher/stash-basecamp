@@ -5,38 +5,39 @@ import QtQuick.Controls
 Item {
     id: root
 
-    // ── Palette ───────────────────────────────────────────────────────────
+    // ── Palette (aligned with notes/keycard) ──────────────────────────────
     readonly property color bgPrimary:      "#171717"
     readonly property color bgSecondary:    "#262626"
+    readonly property color bgActive:       "#332A27"
     readonly property color textPrimary:    "#FFFFFF"
     readonly property color textSecondary:  "#A4A4A4"
     readonly property color textMuted:      "#5D5D5D"
     readonly property color accentOrange:   "#FF5000"
     readonly property color successGreen:   "#22C55E"
     readonly property color errorRed:       "#FB3748"
-    readonly property color warningYellow:  "#F59E0B"
-    readonly property color borderColor:    "#333333"
+    readonly property color warningYellow:  "#FFC107"
+    readonly property color borderColor:    "#383838"
 
     // ── State ─────────────────────────────────────────────────────────────
-    property int    quotaUsed:    0
-    property int    quotaTotal:   0
-    property bool   modulesPanelOpen:   false
-    property bool   pinningPanelOpen:   false
-    property bool   logosPanelOpen:     false
-    property bool   pinningConfigured:  false
-    property bool   coreReady:          false
-    property int    logSeenCount:       0
-    property bool   logosStorageReady:   false
+    property bool   pollBusy:             false
+    property bool   settingsPanelOpen:    false
+    property bool   transportPopupOpen:   false
+    property bool   pinningConfigured:    false
+    property bool   logosStorageReady:    false
     property bool   logosStorageStarting: false
-    property string logosStoragePeerId:  ""
-    property string activeTransport:    "kubo"
+    property string activeTransport:      "kubo"
+    property string logosStoragePeerId:   ""
+    property int    logSeenCount:         0
+
+    // Watched modules list model
+    ListModel { id: watchedModulesModel }
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
     function callModuleParse(raw) {
         try {
             var tmp = JSON.parse(raw)
-            if (typeof tmp === 'string') {
+            if (typeof tmp === "string") {
                 try { return JSON.parse(tmp) } catch(e) { return tmp }
             }
             return tmp
@@ -61,55 +62,65 @@ Item {
         return ts + " " + (e.detail || e.type)
     }
 
-    function formatBytes(n) {
-        if (n <= 0) return "0 B"
-        if (n < 1024) return n + " B"
-        if (n < 1048576) return (n / 1024).toFixed(1) + " KB"
-        if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB"
-        return (n / 1073741824).toFixed(2) + " GB"
+    function transportLabel(t) {
+        if (t === "logos")  return "Logos Storage"
+        if (t === "kubo")   return "Kubo"
+        if (t === "pinata") return "Pinata"
+        return t
     }
 
-    function quotaPercent() {
-        if (quotaTotal <= 0) return 0
-        return Math.min(1.0, quotaUsed / quotaTotal)
+    function transportDotColor() {
+        if (root.activeTransport !== "logos") return root.textMuted
+        if (root.logosStorageReady)    return root.successGreen
+        if (root.logosStorageStarting) return root.warningYellow
+        return root.errorRed
+    }
+
+    function refreshModulesList() {
+        if (typeof logos === "undefined" || !logos.callModule) return
+        var res = callModuleParse(logos.callModule("stash", "getWatchedModules", []))
+        if (res && Array.isArray(res.modules)) {
+            watchedModulesModel.clear()
+            for (var i = 0; i < res.modules.length; i++)
+                watchedModulesModel.append({ name: res.modules[i] })
+        }
     }
 
     function refresh() {
-        if (typeof logos === "undefined" || !logos.callModule) return
+        if (root.pollBusy) return
+        root.pollBusy = true
 
-        var st = callModuleParse(logos.callModule("stash", "getStatus", []))
-        root.coreReady = (st !== null)
+        if (typeof logos === "undefined" || !logos.callModule) {
+            root.pollBusy = false
+            return
+        }
 
         var logRaw = callModuleParse(logos.callModule("stash", "getLog", []))
         if (Array.isArray(logRaw) && logRaw.length > root.logSeenCount) {
             for (var i = root.logSeenCount; i < logRaw.length; i++) {
                 var e = logRaw[i]
-                if (activityLog.logModel.count >= 200) activityLog.logModel.remove(0)
-                activityLog.logModel.append({
+                if (logListView.model.count >= 200)
+                    logListView.model.remove(0)
+                logListView.model.append({
                     ts:    "[" + Qt.formatDateTime(new Date(e.timestamp), "HH:mm:ss") + "]",
                     msg:   entryText(e).replace(/^\[[^\]]+\] /, ""),
-                    level: entryLevel(e.type),
-                    cid:   e.cid || ""
+                    level: entryLevel(e.type)
                 })
             }
             root.logSeenCount = logRaw.length
         }
 
-        var q = callModuleParse(logos.callModule("stash", "getQuota", []))
-        if (q && q.used !== undefined) {
-            quotaUsed  = q.used
-            quotaTotal = q.total
-        }
-
         var si = callModuleParse(logos.callModule("stash", "getStorageInfo", []))
         if (si) {
-            root.logosStorageReady    = si.ready   === true
+            root.logosStorageReady    = si.ready    === true
             root.logosStorageStarting = si.starting === true
-            root.logosStoragePeerId   = si.peerId  || ""
+            root.logosStoragePeerId   = si.peerId   || ""
         }
 
         var at = callModuleParse(logos.callModule("stash", "getActiveTransport", []))
         if (at && at.transport) root.activeTransport = at.transport
+
+        root.pollBusy = false
     }
 
     // ── Timers ────────────────────────────────────────────────────────────
@@ -121,29 +132,9 @@ Item {
         onTriggered: root.refresh()
     }
 
-    Timer {
-        id: pinningConfigPoller
-        interval: 500
-        repeat: true
-        running: !root.pinningConfigured
-        onTriggered: {
-            if (typeof logos === "undefined" || !logos.callModule) return
-            var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
-            if (cfg && cfg.configured === true) {
-                root.pinningConfigured = true
-                pinningConfigPoller.stop()
-            }
-        }
-    }
-
     Component.onCompleted: {
         root.refresh()
-        if (typeof logos !== "undefined" && logos.callModule) {
-            var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
-            if (cfg) root.pinningConfigured = cfg.configured === true
-            var at = callModuleParse(logos.callModule("stash", "getActiveTransport", []))
-            if (at && at.transport) root.activeTransport = at.transport
-        }
+        root.refreshModulesList()
     }
 
     // ── Root background ───────────────────────────────────────────────────
@@ -153,6 +144,8 @@ Item {
         color: root.bgPrimary
     }
 
+    // ── Layout ────────────────────────────────────────────────────────────
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16
@@ -161,604 +154,648 @@ Item {
         // ── Header ────────────────────────────────────────────────────────
         RowLayout {
             Layout.fillWidth: true
+            spacing: 10
 
-            Text {
-                text: "Stash"
-                font.pixelSize: 20
-                font.bold: true
-                color: root.textPrimary
+            ColumnLayout {
+                spacing: 2
+                Text {
+                    text: "Stash"
+                    font.pixelSize: 20
+                    font.bold: true
+                    color: root.textPrimary
+                }
+                Text {
+                    text: "Pins files from the listed modules to selected decentralised storage."
+                    font.pixelSize: 11
+                    color: root.textSecondary
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                }
             }
 
             Item { Layout.fillWidth: true }
 
-            // Modules gear button
+            // Transport status pill
             Rectangle {
-                width: 32; height: 32
+                id: transportPill
+                height: 28
+                width: pillRow.implicitWidth + 20
+                radius: 14
+                color: transportPillArea.containsMouse ? root.bgSecondary : Qt.rgba(0.149, 0.149, 0.149, 0.85)
+                border.color: root.transportPopupOpen ? root.accentOrange : root.borderColor
+                border.width: 1
+
+                Row {
+                    id: pillRow
+                    anchors.centerIn: parent
+                    spacing: 6
+
+                    Rectangle {
+                        width: 7; height: 7; radius: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: root.transportDotColor()
+                    }
+
+                    Text {
+                        text: root.transportLabel(root.activeTransport)
+                        font.pixelSize: 11
+                        color: root.textPrimary
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Text {
+                        text: "▾"
+                        font.pixelSize: 9
+                        color: root.textSecondary
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+
+                MouseArea {
+                    id: transportPillArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.transportPopupOpen = !root.transportPopupOpen
+                        root.settingsPanelOpen  = false
+                    }
+                }
+            }
+
+            // Gear icon
+            Rectangle {
+                width: 28; height: 28
                 radius: 6
-                color: gearBtn.containsMouse ? root.bgSecondary : "transparent"
-                border.color: root.borderColor
+                color: gearArea.containsMouse ? root.bgSecondary : "transparent"
+                border.color: root.settingsPanelOpen ? root.accentOrange : root.borderColor
                 border.width: 1
 
                 Text {
                     anchors.centerIn: parent
                     text: "⚙"
-                    font.pixelSize: 15
-                    color: root.modulesPanelOpen ? root.accentOrange : root.textSecondary
-                }
-
-                MouseArea {
-                    id: gearBtn
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: root.modulesPanelOpen = !root.modulesPanelOpen
-                }
-            }
-
-            // Pinning config button
-            Rectangle {
-                width: 32; height: 32
-                radius: 6
-                color: pinBtn.containsMouse ? root.bgSecondary : "transparent"
-                border.color: root.borderColor
-                border.width: 1
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "⊕"
-                    font.pixelSize: 15
-                    color: root.pinningPanelOpen
-                           ? root.accentOrange
-                           : (root.pinningConfigured ? root.successGreen : root.errorRed)
-                }
-
-                MouseArea {
-                    id: pinBtn
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: {
-                        root.pinningPanelOpen = !root.pinningPanelOpen
-                        if (root.pinningPanelOpen && typeof logos !== "undefined" && logos.callModule) {
-                            var at = callModuleParse(logos.callModule("stash", "getActiveTransport", []))
-                            if (at && at.transport === "logos") {
-                                providerCombo.currentIndex = 2
-                            } else {
-                                var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
-                                if (cfg) {
-                                    providerCombo.currentIndex = cfg.provider === "kubo" ? 1 : 0
-                                    tokenField.text = ""
-                                    tokenField.placeholderText = cfg.token === "***"
-                                        ? "Token saved — leave blank to keep"
-                                        : "JWT / API token"
-                                    endpointField.text = cfg.endpoint || ""
-                                    root.pinningConfigured = cfg.configured === true
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Logos storage button
-            Rectangle {
-                width: 32; height: 32
-                radius: 6
-                color: logosBtn.containsMouse ? root.bgSecondary : "transparent"
-                border.color: root.logosPanelOpen ? root.accentOrange : root.borderColor
-                border.width: 1
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "◈"
                     font.pixelSize: 14
-                    color: root.logosPanelOpen     ? root.accentOrange
-                         : root.logosStorageReady  ? root.successGreen
-                         : root.logosStorageStarting ? root.warningYellow
-                         : root.textMuted
+                    color: root.settingsPanelOpen ? root.accentOrange : root.textSecondary
                 }
 
                 MouseArea {
-                    id: logosBtn
+                    id: gearArea
                     anchors.fill: parent
                     hoverEnabled: true
-                    onClicked: root.logosPanelOpen = !root.logosPanelOpen
-                }
-            }
-        }
-
-        // ── Quota bar ─────────────────────────────────────────────────────
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 4
-            visible: root.quotaTotal > 0
-
-            RowLayout {
-                Layout.fillWidth: true
-                Text {
-                    text: "Storage"
-                    font.pixelSize: 11
-                    color: root.textSecondary
-                }
-                Item { Layout.fillWidth: true }
-                Text {
-                    text: root.formatBytes(root.quotaUsed) + " / " + root.formatBytes(root.quotaTotal)
-                    font.pixelSize: 11
-                    color: root.textMuted
-                }
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                height: 4
-                radius: 2
-                color: root.bgSecondary
-
-                Rectangle {
-                    width: parent.width * root.quotaPercent()
-                    height: parent.height
-                    radius: parent.radius
-                    color: root.quotaPercent() > 0.9 ? root.errorRed :
-                           root.quotaPercent() > 0.7 ? root.warningYellow :
-                                                       root.accentOrange
-                    Behavior on width { NumberAnimation { duration: 300 } }
-                }
-            }
-        }
-
-        // ── Watched modules panel (collapsible) ───────────────────────────
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 4
-            visible: root.modulesPanelOpen
-
-            Text {
-                text: "Watched modules (one per line):"
-                font.pixelSize: 11
-                color: root.textSecondary
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                height: 80
-                radius: 4
-                color: root.bgSecondary
-                border.color: root.borderColor
-                border.width: 1
-
-                ScrollView {
-                    anchors.fill: parent
-                    anchors.margins: 4
-                    TextArea {
-                        id: modulesInput
-                        background: null
-                        color: root.textPrimary
-                        font.pixelSize: 12
-                        font.family: "monospace"
-                        wrapMode: TextArea.NoWrap
-                        placeholderText: "notes\nkeycard"
-                        placeholderTextColor: root.textMuted
-
-                        Component.onCompleted: {
-                            if (typeof logos !== "undefined" && logos.callModule) {
-                                var res = callModuleParse(logos.callModule("stash", "getWatchedModules", []))
-                                if (res && Array.isArray(res.modules))
-                                    text = res.modules.join("\n")
-                            }
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                Layout.alignment: Qt.AlignRight
-                width: 60; height: 26
-                radius: 4
-                color: saveBtn.containsMouse ? root.accentOrange : root.bgSecondary
-                border.color: root.borderColor
-                border.width: 1
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "Save"
-                    font.pixelSize: 11
-                    color: root.textPrimary
-                }
-
-                MouseArea {
-                    id: saveBtn
-                    anchors.fill: parent
-                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        if (typeof logos === "undefined" || !logos.callModule) return
-                        logos.callModule("stash", "setWatchedModules", [modulesInput.text])
-                        root.modulesPanelOpen = false
+                        root.settingsPanelOpen  = !root.settingsPanelOpen
+                        root.transportPopupOpen = false
+                        if (root.settingsPanelOpen)
+                            root.refreshModulesList()
                     }
                 }
             }
         }
 
-        // ── Pinning config panel (collapsible) ────────────────────────────
-        ColumnLayout {
+        // ── Transport dropdown ────────────────────────────────────────────
+        Rectangle {
             Layout.fillWidth: true
-            spacing: 6
-            visible: root.pinningPanelOpen
+            visible: root.transportPopupOpen
+            height: transportDropCol.implicitHeight + 16
+            color: root.bgSecondary
+            radius: 6
+            border.color: root.borderColor
+            border.width: 1
 
-            Text {
-                text: "Pinning Provider"
-                font.pixelSize: 11
-                color: root.textSecondary
-            }
+            ColumnLayout {
+                id: transportDropCol
+                anchors { top: parent.top; left: parent.left; right: parent.right; margins: 8 }
+                spacing: 4
 
-            ComboBox {
-                id: providerCombo
-                Layout.fillWidth: true
-                model: ["Pinata", "Kubo (self-hosted)", "Logos Storage"]
-                background: Rectangle {
-                    color: root.bgSecondary
-                    border.color: root.borderColor
-                    border.width: 1
-                    radius: 4
-                }
-                contentItem: Text {
-                    leftPadding: 8
-                    text: providerCombo.displayText
-                    font.pixelSize: 12
-                    color: root.textPrimary
-                    verticalAlignment: Text.AlignVCenter
-                }
-                popup.background: Rectangle {
-                    color: root.bgSecondary
-                    border.color: root.borderColor
-                    border.width: 1
-                    radius: 4
-                }
-                delegate: ItemDelegate {
-                    width: providerCombo.width
-                    contentItem: Text {
-                        text: modelData
-                        font.pixelSize: 12
-                        color: root.textPrimary
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        color: hovered ? root.borderColor : root.bgSecondary
-                    }
-                }
-            }
-
-            Text {
-                text: "Bearer Token"
-                font.pixelSize: 11
-                color: root.textSecondary
-                visible: providerCombo.currentIndex !== 2
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                height: 32
-                radius: 4
-                color: root.bgSecondary
-                border.color: root.borderColor
-                border.width: 1
-                visible: providerCombo.currentIndex !== 2
-
-                TextField {
-                    id: tokenField
-                    anchors.fill: parent
-                    anchors.margins: 4
-                    background: null
-                    color: root.textPrimary
-                    font.pixelSize: 12
-                    echoMode: TextInput.Password
-                    placeholderText: "JWT / API token"
-                    placeholderTextColor: root.textMuted
-                }
-            }
-
-            Text {
-                text: "Node URL"
-                font.pixelSize: 11
-                color: root.textSecondary
-                visible: providerCombo.currentIndex === 1
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                height: 32
-                radius: 4
-                color: root.bgSecondary
-                border.color: root.borderColor
-                border.width: 1
-                visible: providerCombo.currentIndex === 1
-
-                TextField {
-                    id: endpointField
-                    anchors.fill: parent
-                    anchors.margins: 4
-                    background: null
-                    color: root.textPrimary
-                    font.pixelSize: 12
-                    placeholderText: "https://node.example.com"
-                    placeholderTextColor: root.textMuted
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-
-                Text {
-                    text: providerCombo.currentIndex === 2
-                          ? (root.logosStorageReady ? "● Logos Storage ready" : root.logosStorageStarting ? "● Logos Storage starting…" : "● Logos Storage — init failed")
-                          : (root.pinningConfigured ? "● Configured" : "● Not configured — backups will fail")
-                    font.pixelSize: 11
-                    color: providerCombo.currentIndex === 2
-                           ? (root.logosStorageReady ? root.successGreen : root.logosStorageStarting ? root.warningYellow : root.errorRed)
-                           : (root.pinningConfigured ? root.successGreen : root.errorRed)
-                    Layout.fillWidth: true
-                }
-
-                Rectangle {
-                    width: 60; height: 26
-                    radius: 4
-                    color: pinSaveBtn.containsMouse ? root.accentOrange : root.bgSecondary
-                    border.color: root.borderColor
-                    border.width: 1
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Save"
-                        font.pixelSize: 11
-                        color: root.textPrimary
-                    }
-
-                    MouseArea {
-                        id: pinSaveBtn
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: {
-                            if (typeof logos === "undefined" || !logos.callModule) return
-                            if (providerCombo.currentIndex === 2) {
-                                // Logos Storage — set active transport
-                                var tres = callModuleParse(
-                                    logos.callModule("stash", "setActiveTransport", ["logos"]))
-                                if (tres && tres.ok) {
-                                    root.activeTransport = "logos"
-                                    root.pinningConfigured = true
-                                    root.pinningPanelOpen = false
-                                }
-                            } else {
-                                var provider = providerCombo.currentIndex === 0 ? "pinata" : "kubo"
-                                var endpoint = endpointField.text.trim()
-                                var token    = tokenField.text.trim()
-                                var res = callModuleParse(logos.callModule("stash", "setPinningConfig",
-                                                                           [provider, endpoint, token]))
-                                if (res && res.ok) {
-                                    logos.callModule("stash", "setActiveTransport",
-                                                     [provider === "pinata" ? "pinata" : "kubo"])
-                                    root.activeTransport = provider
-                                    root.pinningConfigured = true
-                                    root.pinningPanelOpen = false
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── Logos storage panel (collapsible) ────────────────────────────
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 6
-            visible: root.logosPanelOpen
-
-            // Status row
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-
-                Text {
-                    text: "Logos Storage"
-                    font.pixelSize: 11
-                    color: root.textSecondary
-                }
-
-                Rectangle {
-                    width: 6; height: 6; radius: 3
-                    color: root.logosStorageReady   ? root.successGreen
-                         : root.logosStorageStarting ? root.warningYellow
-                         : root.textMuted
-                }
-
-                Text {
-                    text: root.logosStorageReady   ? "Ready"
-                        : root.logosStorageStarting ? "Starting…"
-                        : "Offline"
-                    font.pixelSize: 11
-                    color: root.logosStorageReady   ? root.successGreen
-                         : root.logosStorageStarting ? root.warningYellow
-                         : root.textMuted
-                }
-
-                Item { Layout.fillWidth: true }
-            }
-
-            // Peer ID (shown when ready)
-            Text {
-                visible: root.logosStoragePeerId.length > 0
-                text: "Peer: " + root.logosStoragePeerId.substring(0, 20) + "…"
-                font.pixelSize: 10
-                font.family: "Courier New, monospace"
-                color: root.textMuted
-            }
-
-            // Transport selector
-            Text {
-                text: "Active transport"
-                font.pixelSize: 11
-                color: root.textSecondary
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 6
-
+                // Logos Storage option
                 Repeater {
                     model: [
-                        { label: "Logos",  value: "logos"  },
-                        { label: "Kubo",   value: "kubo"   },
-                        { label: "Pinata", value: "pinata" }
+                        { label: "Logos Storage", value: "logos",
+                          status: root.logosStorageReady ? "Ready"
+                                : root.logosStorageStarting ? "Starting…"
+                                : "Offline",
+                          statusColor: root.logosStorageReady ? root.successGreen
+                                     : root.logosStorageStarting ? root.warningYellow
+                                     : root.textMuted },
+                        { label: "Kubo",   value: "kubo",   status: "", statusColor: root.textMuted },
+                        { label: "Pinata", value: "pinata", status: "", statusColor: root.textMuted }
                     ]
 
                     delegate: Rectangle {
                         required property var modelData
                         readonly property bool selected: root.activeTransport === modelData.value
-                        readonly property bool isLogos:  modelData.value === "logos"
-
-                        width: 64; height: 26
+                        Layout.fillWidth: true
+                        height: 34
                         radius: 4
-                        color: selected
-                               ? root.accentOrange
-                               : (transportArea.containsMouse ? root.bgSecondary : "transparent")
-                        border.color: selected ? root.accentOrange : root.borderColor
-                        border.width: 1
-                        // Disable Logos option when not ready
-                        opacity: isLogos && !root.logosStorageReady ? 0.4 : 1.0
+                        color: selected ? root.bgActive
+                             : optionArea.containsMouse ? Qt.rgba(0.22, 0.22, 0.22, 1) : "transparent"
 
-                        Text {
-                            anchors.centerIn: parent
-                            text: modelData.label
-                            font.pixelSize: 11
-                            color: selected ? root.bgPrimary : root.textSecondary
+                        RowLayout {
+                            anchors { fill: parent; leftMargin: 8; rightMargin: 8 }
+                            spacing: 8
+
+                            Rectangle {
+                                width: 6; height: 6; radius: 3
+                                color: modelData.statusColor.toString().length > 0
+                                       ? modelData.statusColor : root.textMuted
+                                visible: modelData.value === "logos"
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            Text {
+                                text: modelData.label
+                                font.pixelSize: 12
+                                color: selected ? root.textPrimary : root.textSecondary
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Text {
+                                visible: modelData.status.length > 0
+                                text: modelData.status
+                                font.pixelSize: 10
+                                color: modelData.statusColor
+                            }
+
+                            Text {
+                                visible: selected
+                                text: "✓"
+                                font.pixelSize: 11
+                                color: root.accentOrange
+                            }
                         }
 
                         MouseArea {
-                            id: transportArea
+                            id: optionArea
                             anchors.fill: parent
                             hoverEnabled: true
-                            enabled: !(isLogos && !root.logosStorageReady)
+                            cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 if (typeof logos === "undefined" || !logos.callModule) return
                                 var res = callModuleParse(
-                                    logos.callModule("stash", "setActiveTransport",
-                                                     [modelData.value]))
-                                if (res && res.ok) root.activeTransport = modelData.value
+                                    logos.callModule("stash", "setActiveTransport", [modelData.value]))
+                                if (res && res.ok) {
+                                    root.activeTransport = modelData.value
+                                    root.transportPopupOpen = false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Settings panel ────────────────────────────────────────────────
+        Rectangle {
+            Layout.fillWidth: true
+            visible: root.settingsPanelOpen
+            height: settingsCol.implicitHeight + 20
+            color: root.bgSecondary
+            radius: 6
+            border.color: root.borderColor
+            border.width: 1
+
+            ColumnLayout {
+                id: settingsCol
+                anchors { top: parent.top; left: parent.left; right: parent.right; margins: 10 }
+                spacing: 8
+
+                Text {
+                    text: "Watched modules"
+                    font.pixelSize: 11
+                    color: root.textSecondary
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 72
+                    radius: 4
+                    color: root.bgPrimary
+                    border.color: root.borderColor
+                    border.width: 1
+
+                    ScrollView {
+                        anchors.fill: parent
+                        anchors.margins: 4
+
+                        TextArea {
+                            id: modulesInput
+                            background: null
+                            color: root.textPrimary
+                            font.pixelSize: 12
+                            font.family: "monospace"
+                            wrapMode: TextArea.NoWrap
+                            placeholderText: "notes\nkeycard"
+                            placeholderTextColor: root.textMuted
+
+                            Component.onCompleted: {
+                                if (typeof logos !== "undefined" && logos.callModule) {
+                                    var res = callModuleParse(logos.callModule("stash", "getWatchedModules", []))
+                                    if (res && Array.isArray(res.modules))
+                                        text = res.modules.join("\n")
+                                }
                             }
                         }
                     }
                 }
 
-                Item { Layout.fillWidth: true }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    Item { Layout.fillWidth: true }
+
+                    Rectangle {
+                        width: 64; height: 26
+                        radius: 4
+                        color: cancelBtn.containsMouse ? Qt.rgba(0.22,0.22,0.22,1) : "transparent"
+                        border.color: root.borderColor; border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Cancel"
+                            font.pixelSize: 11
+                            color: root.textSecondary
+                        }
+                        MouseArea {
+                            id: cancelBtn
+                            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: root.settingsPanelOpen = false
+                        }
+                    }
+
+                    Rectangle {
+                        width: 64; height: 26
+                        radius: 4
+                        color: saveModBtn.containsMouse ? "#CC4000" : root.accentOrange
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Save"
+                            font.pixelSize: 11
+                            color: root.textPrimary
+                        }
+                        MouseArea {
+                            id: saveModBtn
+                            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (typeof logos === "undefined" || !logos.callModule) return
+                                logos.callModule("stash", "setWatchedModules", [modulesInput.text])
+                                root.settingsPanelOpen = false
+                                root.refreshModulesList()
+                            }
+                        }
+                    }
+                }
+
+                // Pinning config (kubo/pinata only)
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    visible: root.activeTransport !== "logos"
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: root.borderColor
+                    }
+
+                    Text {
+                        text: "Pinning config"
+                        font.pixelSize: 11
+                        color: root.textSecondary
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 32
+                        radius: 4
+                        color: root.bgPrimary
+                        border.color: root.borderColor; border.width: 1
+
+                        TextField {
+                            id: tokenField
+                            anchors.fill: parent; anchors.margins: 4
+                            background: null
+                            color: root.textPrimary
+                            font.pixelSize: 12
+                            echoMode: TextInput.Password
+                            placeholderText: "Bearer token (Pinata JWT or Kubo auth)"
+                            placeholderTextColor: root.textMuted
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 32
+                        radius: 4
+                        color: root.bgPrimary
+                        border.color: root.borderColor; border.width: 1
+                        visible: root.activeTransport === "kubo"
+
+                        TextField {
+                            id: endpointField
+                            anchors.fill: parent; anchors.margins: 4
+                            background: null
+                            color: root.textPrimary
+                            font.pixelSize: 12
+                            placeholderText: "Node URL (https://...)"
+                            placeholderTextColor: root.textMuted
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.alignment: Qt.AlignRight
+                        width: 64; height: 26
+                        radius: 4
+                        color: pinSaveBtn2.containsMouse ? "#CC4000" : root.accentOrange
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Save"
+                            font.pixelSize: 11
+                            color: root.textPrimary
+                        }
+                        MouseArea {
+                            id: pinSaveBtn2
+                            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (typeof logos === "undefined" || !logos.callModule) return
+                                var provider = root.activeTransport === "pinata" ? "pinata" : "kubo"
+                                var res = callModuleParse(
+                                    logos.callModule("stash", "setPinningConfig",
+                                                     [provider, endpointField.text.trim(), tokenField.text.trim()]))
+                                if (res && res.ok) root.settingsPanelOpen = false
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        // ── Activity log (keycard/notes style) ────────────────────────────
-        Rectangle {
-            id: activityLog
+        // ── Main content: Modules + Logs ──────────────────────────────────
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: "#0D0D0D"
-            radius: 4
+            spacing: 12
 
-            property alias logModel: logListView.model
+            // ── Modules column ────────────────────────────────────────────
+            ColumnLayout {
+                Layout.preferredWidth: 200
+                Layout.minimumWidth: 160
+                Layout.fillHeight: true
+                spacing: 6
 
-            // visible:false prevents selectAll()/copy() on Linux — keep rendered but invisible
-            TextEdit { id: clipHelper; opacity: 0; width: 0; height: 0 }
-
-            function copyAllToClipboard() {
-                var text = "# stash log\n"
-                for (var i = 0; i < logModel.count; i++) {
-                    var e = logModel.get(i)
-                    text += e.ts + " " + e.msg + "\n"
+                Text {
+                    text: "Modules"
+                    font.pixelSize: 13
+                    font.bold: true
+                    color: root.textPrimary
                 }
-                clipHelper.text = text
-                clipHelper.selectAll()
-                clipHelper.copy()
-                copyFeedback.restart()
-            }
-
-            // Top border
-            Rectangle {
-                anchors { top: parent.top; left: parent.left; right: parent.right }
-                height: 1
-                color: root.borderColor
-                radius: 0
-            }
-
-            // Copy-all button
-            Rectangle {
-                id: copyBtn
-                anchors { top: parent.top; right: parent.right; topMargin: 6; rightMargin: 8 }
-                width: 20; height: 20
-                color: "transparent"
-                opacity: copyBtnArea.containsMouse ? 0.8 : 0.4
-                Behavior on opacity { NumberAnimation { duration: 150 } }
 
                 Rectangle {
-                    x: 3; y: 5; width: 10; height: 10
-                    color: "transparent"
-                    border.color: root.textSecondary; border.width: 1; radius: 2
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    color: root.bgSecondary
+                    radius: 6
+                    border.color: root.borderColor
+                    border.width: 1
+                    clip: true
+
+                    // Empty state
+                    Text {
+                        anchors.centerIn: parent
+                        visible: watchedModulesModel.count === 0
+                        text: "No modules\nwatched"
+                        horizontalAlignment: Text.AlignHCenter
+                        color: root.textMuted
+                        font.pixelSize: 11
+                    }
+
+                    ListView {
+                        id: moduleListView
+                        anchors { fill: parent; topMargin: 4; bottomMargin: 4 }
+                        clip: true
+                        model: watchedModulesModel
+                        spacing: 2
+
+                        delegate: Rectangle {
+                            required property string name
+                            required property int index
+                            width: moduleListView.width
+                            height: 36
+                            color: moduleRowArea.containsMouse ? root.bgActive : "transparent"
+                            radius: 4
+
+                            RowLayout {
+                                anchors { fill: parent; leftMargin: 10; rightMargin: 6 }
+                                spacing: 6
+
+                                Text {
+                                    text: name
+                                    font.pixelSize: 12
+                                    color: root.textPrimary
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+
+                                // Backup button
+                                Rectangle {
+                                    width: 26; height: 26
+                                    radius: 4
+                                    color: backupBtnArea.containsMouse
+                                           ? Qt.rgba(1, 0.314, 0, 0.2) : "transparent"
+                                    border.color: backupBtnArea.containsMouse
+                                                  ? root.accentOrange : "transparent"
+                                    border.width: 1
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "⬆"
+                                        font.pixelSize: 12
+                                        color: backupBtnArea.containsMouse
+                                               ? root.accentOrange : root.textMuted
+                                    }
+
+                                    MouseArea {
+                                        id: backupBtnArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            if (typeof logos === "undefined" || !logos.callModule) return
+                                            logos.callModule("stash", "checkAll", [])
+                                        }
+                                    }
+                                }
+                            }
+
+                            MouseArea {
+                                id: moduleRowArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                // Pass through clicks to children
+                                onClicked: { }
+                            }
+                        }
+                    }
                 }
+            }
+
+            // ── Logs column ───────────────────────────────────────────────
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 6
+
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Logs"
+                        font.pixelSize: 13
+                        font.bold: true
+                        color: root.textPrimary
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    // Copy-all button
+                    Rectangle {
+                        width: 26; height: 26
+                        radius: 4
+                        color: copyBtnArea.containsMouse ? root.bgSecondary : "transparent"
+                        border.color: copyBtnArea.containsMouse ? root.borderColor : "transparent"
+                        border.width: 1
+                        opacity: copyBtnArea.containsMouse ? 1.0 : 0.5
+                        Behavior on opacity { NumberAnimation { duration: 150 } }
+
+                        // Clipboard icon (two overlapping squares)
+                        Rectangle {
+                            x: 4; y: 7; width: 10; height: 11
+                            color: "transparent"
+                            border.color: root.textSecondary; border.width: 1; radius: 1
+                        }
+                        Rectangle {
+                            x: 7; y: 4; width: 10; height: 11
+                            color: copyBtnArea.containsMouse ? root.bgSecondary : root.bgPrimary
+                            border.color: root.textSecondary; border.width: 1; radius: 1
+                        }
+
+                        MouseArea {
+                            id: copyBtnArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                var text = "# stash log\n"
+                                for (var i = 0; i < logListView.model.count; i++) {
+                                    var e = logListView.model.get(i)
+                                    text += e.ts + " " + e.msg + "\n"
+                                }
+                                clipHelper.text = text
+                                clipHelper.selectAll()
+                                clipHelper.copy()
+                                copyDoneTimer.restart()
+                            }
+                        }
+
+                        Timer {
+                            id: copyDoneTimer
+                            interval: 1200
+                        }
+                    }
+                }
+
                 Rectangle {
-                    x: 6; y: 2; width: 10; height: 10
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
                     color: "#0D0D0D"
-                    border.color: root.textSecondary; border.width: 1; radius: 2
-                }
+                    radius: 6
+                    border.color: root.borderColor
+                    border.width: 1
+                    clip: true
 
-                MouseArea {
-                    id: copyBtnArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: activityLog.copyAllToClipboard()
-                }
+                    // Clipboard helper — opacity:0 not visible:false (copy needs rendering)
+                    TextEdit {
+                        id: clipHelper
+                        opacity: 0; width: 0; height: 0
+                    }
 
-                Timer {
-                    id: copyFeedback
-                    interval: 1200
-                    onTriggered: copyBtn.opacity = copyBtnArea.containsMouse ? 0.8 : 0.4
+                    // Empty state
+                    Text {
+                        anchors.centerIn: parent
+                        visible: logListView.model.count === 0
+                        text: "No activity yet"
+                        color: root.textMuted
+                        font.pixelSize: 11
+                        font.family: "Courier New, monospace"
+                    }
+
+                    ListView {
+                        id: logListView
+                        anchors { fill: parent; margins: 10 }
+                        clip: true
+                        spacing: 2
+                        onCountChanged: Qt.callLater(() => logListView.positionViewAtEnd())
+
+                        model: ListModel {}
+
+                        delegate: TextEdit {
+                            required property string ts
+                            required property string msg
+                            required property string level
+                            width: logListView.width
+                            text: ts + " " + msg
+                            color: level === "success" ? root.successGreen
+                                 : level === "error"   ? root.errorRed
+                                 : level === "muted"   ? root.textMuted
+                                 : root.textSecondary
+                            font.pixelSize: 11
+                            font.family: "Courier New, monospace"
+                            wrapMode: Text.WrapAnywhere
+                            readOnly: true
+                            selectByMouse: true
+                            selectedTextColor: root.bgPrimary
+                            selectionColor: root.textSecondary
+                            background: null
+                        }
+                    }
                 }
             }
+        }
 
-            // Empty placeholder
+        // ── Footer ────────────────────────────────────────────────────────
+        RowLayout {
+            Layout.fillWidth: true
+
             Text {
-                anchors.centerIn: parent
-                visible: logListView.model.count === 0
-                text: "No activity yet"
-                color: root.textMuted
+                text: "Get Stash button for your module"
                 font.pixelSize: 11
-                font.family: "Courier New, monospace"
+                color: footerLinkArea.containsMouse ? root.accentOrange : root.textSecondary
+                Behavior on color { ColorAnimation { duration: 120 } }
             }
 
-            // Log entries
-            ListView {
-                id: logListView
-                anchors { fill: parent; margins: 10; topMargin: 14 }
-                clip: true
-                spacing: 2
-                onCountChanged: Qt.callLater(() => logListView.positionViewAtEnd())
-
-                model: ListModel {}
-
-                delegate: TextEdit {
-                    required property string ts
-                    required property string msg
-                    required property string level
-                    required property string cid
-                    width: logListView.width
-                    text: ts + " " + msg
-                    color: level === "success" ? root.successGreen
-                         : level === "error"   ? root.errorRed
-                         : level === "muted"   ? root.textMuted
-                         : root.textSecondary
-                    font.pixelSize: 11
-                    font.family: "Courier New, monospace"
-                    wrapMode: Text.WrapAnywhere
-                    readOnly: true
-                    selectByMouse: true
-                    selectedTextColor: root.bgPrimary
-                    selectionColor: root.textSecondary
-                }
+            Text {
+                text: " ↗"
+                font.pixelSize: 11
+                color: footerLinkArea.containsMouse ? root.accentOrange : root.textMuted
+                Behavior on color { ColorAnimation { duration: 120 } }
             }
+
+            MouseArea {
+                id: footerLinkArea
+                // Cover both text items
+                x: 0
+                width: 210; height: 20
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                // Opens integration docs — handled by platform shell if available
+                onClicked: { }
+            }
+
+            Item { Layout.fillWidth: true }
         }
     }
 }
