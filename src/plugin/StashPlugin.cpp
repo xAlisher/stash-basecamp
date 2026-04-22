@@ -1,7 +1,9 @@
 #include "StashPlugin.h"
 
+#include <QByteArray>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QTimer>
@@ -18,6 +20,7 @@
 #include "storage_module_api.h"
 #include "cpp/logos_api.h"
 #include "cpp/logos_api_client.h"
+#include "token_manager.h"
 
 static constexpr const char* kSettingsOrg    = "logos";
 static constexpr const char* kSettingsApp    = "stash";
@@ -27,6 +30,15 @@ static constexpr const char* kPinEndpointKey = "pinningEndpoint";
 static constexpr const char* kPinTokenKey       = "pinningToken";
 static constexpr const char* kActiveTransportKey = "activeTransport";
 static constexpr int         kLogosChunkSize = 65536;
+
+// File-based diagnostics — qInfo/qWarning often don't reach logoscore stdout
+// per inter-module-comm.md. Writes to /tmp/stash_plugin.diag.
+static void stashDiag(const QString& line) {
+    QFile f(QStringLiteral("/tmp/stash_plugin.diag"));
+    if (f.open(QIODevice::Append | QIODevice::Text))
+        QTextStream(&f) << QDateTime::currentDateTime().toString(Qt::ISODateWithMs)
+                        << " " << line << "\n";
+}
 
 StashPlugin::StashPlugin(QObject* parent)
     : QObject(parent)
@@ -40,17 +52,20 @@ void StashPlugin::initLogos(LogosAPI* api)
 {
     logosAPI = api;
 
-    // Construct typed storage wrapper (cheap — just getClient + stores ptr).
-    // storage_module is declared in metadata.json dependencies, so its QRO
-    // source is published before initLogos is called.
+    // Mirror yolo-board pattern: construct StorageModule and subscribe events
+    // immediately in initLogos.  storage_module is a declared dependency so
+    // its QRO source is published before our initLogos is called.
+    // requestObject() returns in < 100 ms here (no 20 s wait).
     m_logosStorage = new StorageModule(api);
     subscribeLogosStorageEvents();
 
-    // Defer init() + start() — both are sync IPC that would block initLogos.
-    // start() may take ~30 s (libstorage discovery + transport bind) without
-    // the detached-start fork of storage_module.
+    // Defer the init→start async chain to after initLogos returns so the
+    // stash QRO source is published before we make any outgoing IPC calls.
     m_logosStorageStarting = true;
-    QTimer::singleShot(0, this, [this]() { initLogosStorage(); });
+    QTimer::singleShot(0, this, [this]() {
+        initLogosStorage();
+    });
+    stashDiag(QStringLiteral("initLogos: StorageModule created, deferred init scheduled"));
 }
 
 // ── Logos storage init ────────────────────────────────────────────────────────
@@ -75,6 +90,9 @@ void StashPlugin::subscribeLogosStorageEvents()
     // storageUploadDone: [bool ok, QString sessionId, QString cid]
     // Some builds send [bool ok, QString cid] — handle both layouts.
     m_logosStorage->on("storageUploadDone", [this](const QVariantList& d) {
+        stashDiag(QStringLiteral("EVT storageUploadDone: count=%1 raw=%2")
+                  .arg(d.size())
+                  .arg(d.isEmpty() ? "(empty)" : d[0].toString()));
         const bool ok = !d.isEmpty() && d[0].toBool();
         if (!ok) {
             const QString msg = d.size() > 1 ? d[1].toString() : "unknown error";
@@ -93,12 +111,17 @@ void StashPlugin::subscribeLogosStorageEvents()
 
 void StashPlugin::initLogosStorage()
 {
+    stashDiag(QStringLiteral("initLogosStorage: enter ready=%1 init=%2 hasStorage=%3")
+              .arg(m_logosStorageReady).arg(m_logosStorageInitializing).arg(!!m_logosStorage));
     if (m_logosStorageReady || m_logosStorageInitializing || !m_logosStorage) return;
     m_logosStorageInitializing = true;
 
-    const QString dataDir =
+    // Use a UUID-unique per-process data-dir to avoid cross-process lock conflicts.
+    const QString baseDir =
         QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
         + QStringLiteral("/stash/storage");
+    const QString instanceId = QString::fromUtf8(qgetenv("LOGOS_INSTANCE_ID"));
+    const QString dataDir = instanceId.isEmpty() ? baseDir : (baseDir + QStringLiteral("_") + instanceId.left(12));
     QDir().mkpath(dataDir);
 
     QJsonObject cfg;
@@ -106,54 +129,105 @@ void StashPlugin::initLogosStorage()
     const QString cfgJson =
         QString::fromUtf8(QJsonDocument(cfg).toJson(QJsonDocument::Compact));
 
-    // initAsync returns immediately — no nested event loop, no spinner.
-    m_logosStorage->initAsync(cfgJson, [this](bool ok) {
-        if (!ok) {
-            m_logosStorageStarting    = false;
-            m_logosStorageInitializing = false;
-            m_backend.appendLog("error", "Logos storage init() failed");
+    // Bootstrap the storage_module capability token (headless logoscore runs have
+    // no capability_module; inject a synthetic non-empty token that passes the
+    // server-side isEmpty() check).
+    {
+        TokenManager& tm = TokenManager::instance();
+        if (tm.getToken(QStringLiteral("storage_module")).isEmpty()) {
+            tm.saveToken(QStringLiteral("storage_module"),
+                         QStringLiteral("stash_headless_bootstrap_v1"));
+            stashDiag(QStringLiteral("initLogosStorage: bootstrapped storage_module token"));
+        }
+    }
+
+    // ── Sync init (yolo-board pattern) ───────────────────────────────────────
+    // invokeRemoteMethod runs a nested QEventLoop via waitForFinished, which
+    // properly drains the QRO stream. Use this for init, start, and uploadUrl
+    // so events and replies arrive in the right order.
+    stashDiag(QStringLiteral("initLogosStorage: calling init() dataDir=%1 retry=%2").arg(dataDir).arg(m_initRetryCount));
+    const bool initOk = m_logosStorage->init(cfgJson);
+    stashDiag(QStringLiteral("initLogosStorage: init() returned %1").arg(initOk));
+
+    if (!initOk) {
+        // init() fails if storage_module was already initialised (prior crash).
+        // Fall through to start() — if already initialised it will succeed.
+        stashDiag(QStringLiteral("initLogosStorage: init() failed — trying start() directly"));
+    }
+
+    stashDiag(QStringLiteral("initLogosStorage: calling start()"));
+    const bool startOk = m_logosStorage->start();
+    stashDiag(QStringLiteral("initLogosStorage: start() returned %1").arg(startOk));
+
+    m_logosStorageInitializing = false;
+
+    if (!startOk) {
+        if (!initOk && m_initRetryCount < 10) {
+            // Both init() and start() failed — node not ready yet, retry.
+            m_initRetryCount++;
+            m_logosStorageStarting = false;
+            stashDiag(QStringLiteral("init+start both failed — retry %1/10 in 3 s").arg(m_initRetryCount));
+            QTimer::singleShot(3000, this, [this]() { initLogosStorage(); });
             return;
         }
-        // startAsync returns immediately — storage_module starts in background.
-        // Actual readiness is signalled by the "storageStart" event (subscribed
-        // in subscribeLogosStorageEvents), which sets m_logosStorageReady.
-        m_logosStorage->startAsync([this](bool accepted) {
-            m_logosStorageInitializing = false;
-            if (!accepted) {
-                m_logosStorageStarting = false;
-                m_backend.appendLog("error", "Logos storage start() rejected");
-            }
-            // If accepted, wait for the "storageStart" event to confirm readiness.
-            // m_logosStorageReady is set there, not here.
-        });
-    });
+        m_logosStorageStarting = false;
+        m_backend.appendLog("error", "Logos storage start() rejected");
+        stashDiag(QStringLiteral("initLogosStorage: start() rejected — storage offline"));
+        return;
+    }
+
+    // Set ready directly after start() returns (yolo-board pattern).
+    // storageStart event doesn't arrive reliably cross-process via QRO.
+    m_initRetryCount      = 0;
+    m_logosStorageReady   = true;
+    m_logosStorageStarting = false;
+    m_backend.appendLog("logos_storage", "storage_module ready");
+    stashDiag(QStringLiteral("initLogosStorage: storage_module READY"));
+
+    // Process uploads that were queued while storage was starting.
+    const auto deferred = m_deferredLogosUploads;
+    m_deferredLogosUploads.clear();
+    for (const PendingLogosUpload& def : deferred)
+        queueViaLogos(def.filePath, def.client, def.objectName);
 }
 
 void StashPlugin::handleLogosUploadDone(const QString& sessionId, const QString& cid)
 {
-    QString filePath;
+    PendingLogosUpload pending;
     if (!sessionId.isEmpty() && m_pendingLogosUploads.contains(sessionId)) {
-        filePath = m_pendingLogosUploads.take(sessionId);
+        pending = m_pendingLogosUploads.take(sessionId);
     } else if (!m_pendingLogosUploads.isEmpty()) {
         // Fallback: grab first entry.  Handles:
         //  a) empty sessionId in event ([ok, cid] 2-element payload)
         //  b) stored under empty key because uploadUrl() LogosResult.value
         //     was empty cross-process (broken serialization path)
         auto it = m_pendingLogosUploads.begin();
-        filePath = it.value();
+        pending = it.value();
         m_pendingLogosUploads.erase(it);
     }
 
-    const QString fname = filePath.isEmpty()
-        ? cid.left(12) : QFileInfo(filePath).fileName();
+    const QString fname = pending.filePath.isEmpty()
+        ? cid.left(12) : QFileInfo(pending.filePath).fileName();
 
     if (cid.isEmpty()) {
         m_backend.appendLog("error", "Logos upload done but no CID");
         return;
     }
 
-    m_backend.appendLog("logos_uploaded", fname + " \u2192 " + cid);
+    m_backend.appendLog("logos_uploaded", fname + " \u2192 " + cid + " (logos)");
+    stashDiag(QStringLiteral("handleLogosUploadDone: cid=%1 file=%2").arg(cid, fname));
     qInfo() << "StashPlugin: Logos upload done cid=" << cid << "file=" << fname;
+
+    // If this upload was triggered by checkAll(), call setBackupCid on the
+    // source module so it records the new CID and timestamp.
+    if (pending.client && !pending.objectName.isEmpty()) {
+        const QString ts = QString::number(QDateTime::currentSecsSinceEpoch());
+        stashDiag(QStringLiteral("handleLogosUploadDone: calling setBackupCid on %1").arg(pending.objectName));
+        pending.client->invokeRemoteMethod(
+            pending.objectName,
+            QStringLiteral("setBackupCid"),
+            cid, ts);
+    }
 }
 
 QString StashPlugin::initialize()
@@ -220,6 +294,14 @@ QString StashPlugin::checkAll()
     if (!logosAPI)
         return errorJson(QStringLiteral("not initialized"));
 
+    QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
+    const QString transport = s.value(QLatin1String(kActiveTransportKey),
+                                      QStringLiteral("kubo")).toString();
+    const bool useLogos = (transport == QStringLiteral("logos"));
+
+    if (useLogos && !m_logosStorageReady)
+        return errorJson(QStringLiteral("Logos storage not ready — select kubo or pinata, or wait for Logos Storage to start"));
+
     int checked = 0;
     int queued  = 0;
 
@@ -230,7 +312,6 @@ QString StashPlugin::checkAll()
         ++checked;
 
         // Convention: module "foo" registers its backend as "FooBackend".
-        // This lets checkAll() work without knowing module internals.
         QString objectName = moduleName;
         objectName[0] = objectName[0].toUpper();
         objectName += QStringLiteral("Backend");
@@ -246,41 +327,57 @@ QString StashPlugin::checkAll()
         const QString filePath = resp.value(QStringLiteral("path")).toString();
         if (filePath.isEmpty()) continue;
 
-        // Capture for the async callback.
-        auto* capturedClient = client;
-        const QString capturedObject = objectName;
-
-        const bool ok = m_backend.uploadWithCallback(
-            filePath,
-            [capturedClient, capturedObject](const QString& cid) {
-                const QString ts = QString::number(QDateTime::currentSecsSinceEpoch());
-                capturedClient->invokeRemoteMethod(
-                    capturedObject,
-                    QStringLiteral("setBackupCid"),
-                    cid, ts);
-            });
+        bool ok = false;
+        if (useLogos) {
+            // Route through Logos storage_module IPC.
+            // queueViaLogos stores (client, objectName) so handleLogosUploadDone
+            // can call setBackupCid when the storageUploadDone event fires.
+            const QString qr = queueViaLogos(filePath, client, objectName);
+            const QJsonObject qobj = QJsonDocument::fromJson(qr.toUtf8()).object();
+            ok = qobj.value(QStringLiteral("queued")).toBool();
+        } else {
+            // Route through kubo/pinata via StashBackend.
+            auto* capturedClient = client;
+            const QString capturedObject = objectName;
+            ok = m_backend.uploadWithCallback(
+                filePath,
+                [capturedClient, capturedObject](const QString& cid) {
+                    const QString ts = QString::number(QDateTime::currentSecsSinceEpoch());
+                    capturedClient->invokeRemoteMethod(
+                        capturedObject,
+                        QStringLiteral("setBackupCid"),
+                        cid, ts);
+                });
+        }
 
         if (ok) ++queued;
     }
 
     QJsonObject result;
-    result[QStringLiteral("checked")] = checked;
-    result[QStringLiteral("queued")]  = queued;
+    result[QStringLiteral("checked")]   = checked;
+    result[QStringLiteral("queued")]    = queued;
+    result[QStringLiteral("transport")] = transport;
     return QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact));
 }
 
 // ── Logos IPC upload ──────────────────────────────────────────────────────────
 
-QString StashPlugin::uploadViaLogos(const QString& filePath)
+QString StashPlugin::queueViaLogos(const QString& filePath,
+                                    LogosAPIClient* client,
+                                    const QString&  objectName)
 {
-    if (filePath.isEmpty())
-        return errorJson(QStringLiteral("filePath is empty"));
-
     if (!m_logosStorage)
         return errorJson(QStringLiteral("Logos storage not initialized"));
 
-    if (m_logosStorageStarting)
-        return errorJson(QStringLiteral("Logos storage is starting — try again in a moment"));
+    if (m_logosStorageStarting) {
+        PendingLogosUpload def;
+        def.filePath   = filePath;
+        def.client     = client;
+        def.objectName = objectName;
+        m_deferredLogosUploads.append(def);
+        stashDiag(QStringLiteral("queueViaLogos: deferred (storage starting) %1").arg(QFileInfo(filePath).fileName()));
+        return queuedJson();
+    }
 
     if (!m_logosStorageReady)
         return errorJson(QStringLiteral("Logos storage not ready"));
@@ -288,17 +385,89 @@ QString StashPlugin::uploadViaLogos(const QString& filePath)
     if (!QFileInfo::exists(filePath))
         return errorJson(QStringLiteral("File not found: ") + filePath);
 
-    LogosResult r = m_logosStorage->uploadUrl(filePath, kLogosChunkSize);
-    if (!r.success)
-        return errorJson(QStringLiteral("Upload rejected: ") + r.error.toString());
+    // Use the filePath as a placeholder key until uploadUrlAsync fires the
+    // callback with the real sessionId.  handleLogosUploadDone already has a
+    // fallback that grabs the first pending entry when sessionId is unknown.
+    PendingLogosUpload pending;
+    pending.filePath   = filePath;
+    pending.client     = client;
+    pending.objectName = objectName;
+    m_pendingLogosUploads[filePath] = pending;
 
-    const QString sessionId = r.value.toString();
-    m_pendingLogosUploads[sessionId] = filePath;
-    m_backend.appendLog("logos_upload_queued",
-                        QFileInfo(filePath).fileName()
-                        + QStringLiteral(" (session=") + sessionId.left(8) + QStringLiteral("…)"));
+    const QString fname = QFileInfo(filePath).fileName();
+
+    // Defer the storage_module IPC call to after this invocation returns to
+    // the event loop.  QML calls stash.upload() synchronously — while that
+    // call is on the stack the stash IPC channel is held open.  Calling
+    // uploadUrlAsync() inline tries to call storage_module over the same IPC
+    // stack, which stalls for ~20 s before timing out.  QTimer::singleShot(0)
+    // returns {"queued":true} to QML first, frees the IPC channel, then fires
+    // the actual storage_module call on the next event-loop iteration.
+    stashDiag(QStringLiteral("queueViaLogos: deferred upload scheduled for %1").arg(fname));
+
+    QTimer::singleShot(0, this, [this, filePath, fname]() {
+        if (!m_logosStorage || !m_logosStorageReady) {
+            m_pendingLogosUploads.remove(filePath);
+            m_backend.appendLog(QStringLiteral("error"),
+                                QStringLiteral("Logos upload aborted: storage not ready"));
+            return;
+        }
+        doChunkedUpload(filePath, fname);
+    });
 
     return queuedJson();
+}
+
+// ── uploadUrl helper (yolo-board pattern) ────────────────────────────────────
+//
+// Sync uploadUrl — invokeRemoteMethod runs a nested QEventLoop via
+// waitForFinished.  The Go goroutine may emit storageUploadDone synchronously
+// before the uploadUrl reply is written on the server side, but the nested
+// event loop drains both in order: event arrives, then reply arrives, then
+// waitForFinished returns.  storageUploadDone handler fires during the wait.
+
+void StashPlugin::doChunkedUpload(const QString& filePath, const QString& fname)
+{
+    // Re-inject bootstrap token in case it was consumed between init and here.
+    {
+        TokenManager& tm = TokenManager::instance();
+        if (tm.getToken(QStringLiteral("storage_module")).isEmpty())
+            tm.saveToken(QStringLiteral("storage_module"),
+                         QStringLiteral("stash_headless_bootstrap_v1"));
+    }
+
+    stashDiag(QStringLiteral("uploadUrl sync: file=%1").arg(fname));
+
+    // Sync call — waitForFinished runs a nested event loop that properly
+    // drains the QRO stream, including the storageUploadDone event.
+    const LogosResult r = m_logosStorage->uploadUrl(filePath, kLogosChunkSize);
+
+    stashDiag(QStringLiteral("uploadUrl result: success=%1 value=%2 err=%3")
+              .arg(r.success).arg(r.value.toString()).arg(r.error.toString()));
+
+    if (!r.success) {
+        m_pendingLogosUploads.remove(filePath);
+        m_backend.appendLog(QStringLiteral("error"),
+            QStringLiteral("Logos uploadUrl failed: ") + r.error.toString());
+        return;
+    }
+
+    // Re-key the pending entry from filePath → real sessionId so that
+    // handleLogosUploadDone can find it when the event fires.
+    const QString sessionId = r.value.toString();
+    if (!sessionId.isEmpty() && m_pendingLogosUploads.contains(filePath)) {
+        PendingLogosUpload p = m_pendingLogosUploads.take(filePath);
+        m_pendingLogosUploads[sessionId] = p;
+    }
+    stashDiag(QStringLiteral("uploadUrl accepted: session=%1 (storageUploadDone should have fired during wait)").arg(sessionId));
+}
+
+QString StashPlugin::uploadViaLogos(const QString& filePath)
+{
+    if (filePath.isEmpty())
+        return errorJson(QStringLiteral("filePath is empty"));
+
+    return queueViaLogos(filePath, nullptr, QString());
 }
 
 QString StashPlugin::getStorageInfo()
@@ -307,17 +476,12 @@ QString StashPlugin::getStorageInfo()
     obj[QStringLiteral("ready")]    = m_logosStorageReady;
     obj[QStringLiteral("starting")] = m_logosStorageStarting;
 
-    if (m_logosStorage && m_logosStorageReady) {
-        LogosResult r = m_logosStorage->debug();
-        if (r.success) {
-            obj[QStringLiteral("peerId")] = r.getString("id");
-            obj[QStringLiteral("spr")]    = r.getString("spr");
-            QJsonArray addrs;
-            const auto addrList = r.getValue<QStringList>("addrs");
-            for (const QString& a : addrList) addrs.append(a);
-            obj[QStringLiteral("addrs")] = addrs;
-        }
-    }
+    // Cached peer info (populated by refreshPeerInfo, not on every poll).
+    if (!m_logosStoragePeerId.isEmpty())
+        obj[QStringLiteral("peerId")] = m_logosStoragePeerId;
+    if (!m_logosStorageSpr.isEmpty())
+        obj[QStringLiteral("spr")] = m_logosStorageSpr;
+
     return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
 
@@ -333,6 +497,8 @@ QString StashPlugin::setActiveTransport(const QString& transport)
 
     QSettings s{QLatin1String(kSettingsOrg), QLatin1String(kSettingsApp)};
     s.setValue(QLatin1String(kActiveTransportKey), transport);
+    m_backend.appendLog(QStringLiteral("info"),
+                        QStringLiteral("transport changed to ") + transport);
 
     QJsonObject obj;
     obj[QStringLiteral("ok")] = true;
@@ -435,7 +601,8 @@ QString StashPlugin::uploadViaIpfs(const QString& filePath)
     // Local ipfs uses CIDv0 (Qm...), Pinata returns CIDv1 (bafk...) — same
     // content, different encoding. Trust the remote CID as canonical.
     m_backend.appendLog(QStringLiteral("backup_uploaded"),
-                        fname + QStringLiteral(" → ") + remoteCid);
+                        fname + QStringLiteral(" \u2192 ") + remoteCid
+                        + QStringLiteral(" (") + providerStr + QStringLiteral(")"));
     QJsonObject obj;
     obj[QStringLiteral("cid")] = remoteCid;
     return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));

@@ -1,6 +1,33 @@
 #include "storage_module_api.h"
 
 #include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QUrl>
+
+// ModuleProxy on the storage_module side converts LogosResult → JSON string before
+// sending over QRO, because LogosResult is not Q_DECLARE_METATYPE-d and cannot
+// be serialised across process boundaries.  The JSON arrives as QVariant(QString).
+// parseLogosResult() handles both the (broken) LogosResult QVariant and the JSON
+// string path so all upload/download helpers return meaningful values.
+static LogosResult parseLogosResult(const QVariant& v) {
+    if (!v.isValid()) return {};
+    // Try direct cast first (works when both sides share the same metatype id).
+    if (v.canConvert<LogosResult>()) {
+        LogosResult r = qvariant_cast<LogosResult>(v);
+        if (r.success || !r.error.toString().isEmpty()) return r;
+    }
+    // Fall back to JSON string path (the common cross-process case).
+    const QString s = v.toString();
+    if (s.isEmpty()) return {};
+    const QJsonObject obj = QJsonDocument::fromJson(s.toUtf8()).object();
+    if (obj.isEmpty()) return {};
+    LogosResult r;
+    r.success = obj[QStringLiteral("success")].toBool();
+    r.value   = obj[QStringLiteral("value")].toVariant();
+    r.error   = obj[QStringLiteral("error")].toVariant();
+    return r;
+}
 
 StorageModule::StorageModule(LogosAPI* api) : m_api(api), m_client(api->getClient("storage_module")), m_moduleName(QStringLiteral("storage_module")) {}
 
@@ -200,20 +227,29 @@ void StorageModule::connectAsync(const QString& peerId, const QStringList& peerA
 }
 
 LogosResult StorageModule::uploadUrl(const QString& filePath, int chunkSize) {
-    QVariant _result = m_client->invokeRemoteMethod("storage_module", "uploadUrl", filePath, chunkSize);
-    return _result.value<LogosResult>();
+    // Pass as QUrl so the server-side StorageModuleProviderObject::uploadUrl(QUrl, int)
+    // dispatch path is hit — the QString path goes through QUrl::fromLocalFile which
+    // produces a proper file:// URL that the server converts back via toLocalFile().
+    QVariant _result = m_client->invokeRemoteMethod("storage_module", "uploadUrl",
+        QVariant::fromValue(QUrl::fromLocalFile(filePath)), chunkSize);
+    return parseLogosResult(_result);
 }
 
 void StorageModule::uploadUrlAsync(const QString& filePath, int chunkSize, std::function<void(LogosResult)> callback, Timeout timeout) {
     if (!callback) return;
-    m_client->invokeRemoteMethodAsync("storage_module", "uploadUrl", QVariantList{filePath, chunkSize}, [callback](QVariant v) {
-        callback(v.isValid() ? qvariant_cast<LogosResult>(v) : LogosResult{});
-    }, timeout);
+    m_client->invokeRemoteMethodAsync("storage_module", "uploadUrl",
+        QVariantList{QVariant::fromValue(QUrl::fromLocalFile(filePath)), chunkSize},
+        [callback](QVariant v) {
+            callback(parseLogosResult(v));
+        }, timeout);
 }
 
 LogosResult StorageModule::uploadInit(const QString& filename, int chunkSize) {
-    QVariant _result = m_client->invokeRemoteMethod("storage_module", "uploadInit", filename, chunkSize);
-    return _result.value<LogosResult>();
+    // The first uploadInit call after storage start() can take ~20 s while the Go
+    // node finishes internal initialization.  Use a 60 s timeout to outlast it.
+    QVariant _result = m_client->invokeRemoteMethod("storage_module", "uploadInit",
+        QVariant(filename), QVariant(chunkSize), Timeout(60000));
+    return parseLogosResult(_result);
 }
 
 void StorageModule::uploadInitAsync(const QString& filename, int chunkSize, std::function<void(LogosResult)> callback, Timeout timeout) {
@@ -224,8 +260,9 @@ void StorageModule::uploadInitAsync(const QString& filename, int chunkSize, std:
 }
 
 LogosResult StorageModule::uploadChunk(const QString& sessionId, const QString& chunk) {
-    QVariant _result = m_client->invokeRemoteMethod("storage_module", "uploadChunk", sessionId, chunk);
-    return _result.value<LogosResult>();
+    QVariant _result = m_client->invokeRemoteMethod("storage_module", "uploadChunk",
+        QVariant(sessionId), QVariant(chunk), Timeout(60000));
+    return parseLogosResult(_result);
 }
 
 void StorageModule::uploadChunkAsync(const QString& sessionId, const QString& chunk, std::function<void(LogosResult)> callback, Timeout timeout) {
@@ -236,14 +273,15 @@ void StorageModule::uploadChunkAsync(const QString& sessionId, const QString& ch
 }
 
 LogosResult StorageModule::uploadFinalize(const QString& sessionId) {
-    QVariant _result = m_client->invokeRemoteMethod("storage_module", "uploadFinalize", sessionId);
-    return _result.value<LogosResult>();
+    QVariant _result = m_client->invokeRemoteMethod("storage_module", "uploadFinalize",
+        QVariant(sessionId), Timeout(60000));
+    return parseLogosResult(_result);
 }
 
 void StorageModule::uploadFinalizeAsync(const QString& sessionId, std::function<void(LogosResult)> callback, Timeout timeout) {
     if (!callback) return;
     m_client->invokeRemoteMethodAsync("storage_module", "uploadFinalize", QVariantList() << sessionId, [callback](QVariant v) {
-        callback(v.isValid() ? qvariant_cast<LogosResult>(v) : LogosResult{});
+        callback(parseLogosResult(v));
     }, timeout);
 }
 
@@ -339,7 +377,7 @@ LogosResult StorageModule::manifests() {
 void StorageModule::manifestsAsync(std::function<void(LogosResult)> callback, Timeout timeout) {
     if (!callback) return;
     m_client->invokeRemoteMethodAsync("storage_module", "manifests", QVariantList(), [callback](QVariant v) {
-        callback(v.isValid() ? qvariant_cast<LogosResult>(v) : LogosResult{});
+        callback(parseLogosResult(v));
     }, timeout);
 }
 
