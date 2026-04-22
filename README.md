@@ -2,6 +2,7 @@
 
 Decentralised backup for [Logos Basecamp](https://github.com/logos-co/logos-basecamp) modules.
 Any module can add one-click backup to IPFS / Logos Storage by exposing two C++ methods and dropping in a QML component.
+<img width="1025" height="806" alt="image" src="https://github.com/user-attachments/assets/8087a99e-4680-4ce1-b5e1-ca0496041ec0" />
 
 ---
 
