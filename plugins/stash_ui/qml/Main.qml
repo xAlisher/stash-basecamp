@@ -621,29 +621,37 @@ Item {
         RowLayout {
             Layout.fillWidth: true
 
-            Text {
-                text: "Get Stash button for your module"
-                font.pixelSize: 11
-                color: footerLinkArea.containsMouse ? root.accentOrange : root.textSecondary
-                Behavior on color { ColorAnimation { duration: 120 } }
-            }
+            Item {
+                implicitWidth:  linkRow.implicitWidth
+                implicitHeight: linkRow.implicitHeight
 
-            Text {
-                text: " ↗"
-                font.pixelSize: 11
-                color: footerLinkArea.containsMouse ? root.accentOrange : root.textMuted
-                Behavior on color { ColorAnimation { duration: 120 } }
-            }
+                Row {
+                    id: linkRow
+                    spacing: 0
 
-            MouseArea {
-                id: footerLinkArea
-                // Cover both text items
-                x: 0
-                width: 210; height: 20
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                // Opens integration docs — handled by platform shell if available
-                onClicked: { }
+                    Text {
+                        text: "Get Stash button for your module"
+                        font.pixelSize: 11
+                        color: footerLinkArea.containsMouse ? root.accentOrange : root.textSecondary
+                        Behavior on color { ColorAnimation { duration: 120 } }
+                    }
+
+                    Text {
+                        text: " ↗"
+                        font.pixelSize: 11
+                        color: footerLinkArea.containsMouse ? root.accentOrange : root.textMuted
+                        anchors.verticalCenter: parent.verticalCenter
+                        Behavior on color { ColorAnimation { duration: 120 } }
+                    }
+                }
+
+                MouseArea {
+                    id: footerLinkArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Qt.openUrlExternally(Qt.resolvedUrl("stash-button-integration.md"))
+                }
             }
 
             Item { Layout.fillWidth: true }
