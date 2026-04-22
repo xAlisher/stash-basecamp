@@ -304,7 +304,7 @@ Item {
                                 visible: selected
                                 text: "✓"
                                 font.pixelSize: 11
-                                color: root.accentOrange
+                                color: root.textMuted
                             }
                         }
 
