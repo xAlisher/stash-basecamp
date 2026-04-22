@@ -1,13 +1,27 @@
 #pragma once
 
+#include <QMap>
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantList>
 
 #include "interface.h"
 #include "core/StashBackend.h"
 #include "core/PinningClient.h"
+
+class StorageModule;   // from src/generated/storage_module_api.h
+class LogosAPIClient;  // from cpp/logos_api_client.h
+
+// Tracks an in-flight Logos upload.
+// client/objectName are non-null only for checkAll()-initiated uploads
+// that need to call setBackupCid() on the source module when done.
+struct PendingLogosUpload {
+    QString          filePath;
+    LogosAPIClient*  client     = nullptr;
+    QString          objectName;
+};
 
 class StashPlugin : public QObject, public PluginInterface
 {
@@ -29,6 +43,21 @@ public:
 
     // Download a CID to a local path. Returns {"queued":true} or {"error":"..."}.
     Q_INVOKABLE QString download(const QString& cid, const QString& destPath);
+
+    // Upload via Logos storage_module IPC (typed SDK).
+    // Returns {"queued":true} if accepted, {"error":"..."} if not ready or rejected.
+    Q_INVOKABLE QString uploadViaLogos(const QString& filePath);
+
+    // Returns {"ready":bool,"starting":bool,"peerId":"...","spr":"..."}.
+    Q_INVOKABLE QString getStorageInfo();
+
+    // Set the active upload transport: "logos" | "kubo" | "pinata".
+    // upload() and checkAll() will route through the selected transport.
+    // Returns {"ok":true} or {"error":"..."}.
+    Q_INVOKABLE QString setActiveTransport(const QString& transport);
+
+    // Returns {"transport":"logos"|"kubo"|"pinata"}.
+    Q_INVOKABLE QString getActiveTransport() const;
 
     // ── Module watch list ────────────────────────────────────────────────────
     // Newline-separated module names. Stash will call getFileForStash() on each.
@@ -75,7 +104,34 @@ private:
     static QString errorJson(const QString& msg);
     static QString queuedJson();
 
+    // Logos storage_module IPC (typed SDK)
+    void initLogosStorage();
+    void subscribeLogosStorageEvents();
+    void handleLogosUploadDone(const QString& sessionId, const QString& cid);
+
+    // Queue a file for Logos upload and record callback info for setBackupCid.
+    // client/objectName may be null/"" for direct uploadViaLogos() calls
+    // (no setBackupCid needed).  Returns {"queued":true} or {"error":"..."}.
+    QString queueViaLogos(const QString& filePath,
+                          LogosAPIClient* client,
+                          const QString&  objectName);
+
+    // Upload via uploadUrl (yolo-board pattern): sync call, storageUploadDone event
+    // arrives during waitForFinished's nested event loop.
+    void doChunkedUpload(const QString& filePath, const QString& fname);
+
     StashBackend   m_backend;
     QStringList    m_watchedModules;
     PinningClient  m_pinningClient;
+
+    // Logos storage state
+    StorageModule*                        m_logosStorage          = nullptr;
+    bool                                  m_logosStorageReady     = false;
+    bool                                  m_logosStorageStarting  = false;
+    bool                                  m_logosStorageInitializing = false;
+    int                                   m_initRetryCount        = 0;
+    QString                               m_logosStoragePeerId;
+    QString                               m_logosStorageSpr;
+    QMap<QString, PendingLogosUpload>     m_pendingLogosUploads;  // sessionId → upload
+    QList<PendingLogosUpload>             m_deferredLogosUploads; // queued while storage starting
 };

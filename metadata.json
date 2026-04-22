@@ -6,7 +6,7 @@
   "description": "Lean decentralised storage — drop a file, get a CID back",
   "main": "stash_plugin",
   "icon": "",
-  "dependencies": [],
+  "dependencies": ["storage_module"],
 
   "nix": {
     "packages": {

@@ -16,8 +16,13 @@ logos_module(
         src/core/StashBackend.cpp
         src/core/StorageClient.h
         src/core/StorageClient.cpp
+        src/core/LogosStorageTransport.cpp
         src/core/PinningClient.h
         src/core/PinningClient.cpp
         src/plugin/StashPlugin.h
         src/plugin/StashPlugin.cpp
+        src/generated/storage_module_api.cpp
+    INCLUDE_DIRS
+        src
+        src/generated
 )

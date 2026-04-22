@@ -20,11 +20,16 @@ Item {
     // ── State ─────────────────────────────────────────────────────────────
     property int    quotaUsed:    0
     property int    quotaTotal:   0
-    property bool   modulesPanelOpen: false
-    property bool   pinningPanelOpen: false
-    property bool   pinningConfigured: false
-    property bool   coreReady:    false
-    property int    logSeenCount: 0   // how many backend entries we've appended
+    property bool   modulesPanelOpen:   false
+    property bool   pinningPanelOpen:   false
+    property bool   logosPanelOpen:     false
+    property bool   pinningConfigured:  false
+    property bool   coreReady:          false
+    property int    logSeenCount:       0
+    property bool   logosStorageReady:   false
+    property bool   logosStorageStarting: false
+    property string logosStoragePeerId:  ""
+    property string activeTransport:    "kubo"
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -39,7 +44,8 @@ Item {
     }
 
     function entryLevel(type) {
-        if (type === "backup_uploaded" || type === "uploaded" || type === "downloaded")
+        if (type === "backup_uploaded" || type === "uploaded" || type === "downloaded"
+                || type === "logos_uploaded")
             return "success"
         if (type === "error")
             return "error"
@@ -94,6 +100,16 @@ Item {
             quotaUsed  = q.used
             quotaTotal = q.total
         }
+
+        var si = callModuleParse(logos.callModule("stash", "getStorageInfo", []))
+        if (si) {
+            root.logosStorageReady    = si.ready   === true
+            root.logosStorageStarting = si.starting === true
+            root.logosStoragePeerId   = si.peerId  || ""
+        }
+
+        var at = callModuleParse(logos.callModule("stash", "getActiveTransport", []))
+        if (at && at.transport) root.activeTransport = at.transport
     }
 
     // ── Timers ────────────────────────────────────────────────────────────
@@ -125,6 +141,8 @@ Item {
         if (typeof logos !== "undefined" && logos.callModule) {
             var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
             if (cfg) root.pinningConfigured = cfg.configured === true
+            var at = callModuleParse(logos.callModule("stash", "getActiveTransport", []))
+            if (at && at.transport) root.activeTransport = at.transport
         }
     }
 
@@ -200,18 +218,49 @@ Item {
                     onClicked: {
                         root.pinningPanelOpen = !root.pinningPanelOpen
                         if (root.pinningPanelOpen && typeof logos !== "undefined" && logos.callModule) {
-                            var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
-                            if (cfg) {
-                                providerCombo.currentIndex = cfg.provider === "kubo" ? 1 : 0
-                                tokenField.text = ""
-                                tokenField.placeholderText = cfg.token === "***"
-                                    ? "Token saved — leave blank to keep"
-                                    : "JWT / API token"
-                                endpointField.text = cfg.endpoint || ""
-                                root.pinningConfigured = cfg.configured === true
+                            var at = callModuleParse(logos.callModule("stash", "getActiveTransport", []))
+                            if (at && at.transport === "logos") {
+                                providerCombo.currentIndex = 2
+                            } else {
+                                var cfg = callModuleParse(logos.callModule("stash", "getPinningConfig", []))
+                                if (cfg) {
+                                    providerCombo.currentIndex = cfg.provider === "kubo" ? 1 : 0
+                                    tokenField.text = ""
+                                    tokenField.placeholderText = cfg.token === "***"
+                                        ? "Token saved — leave blank to keep"
+                                        : "JWT / API token"
+                                    endpointField.text = cfg.endpoint || ""
+                                    root.pinningConfigured = cfg.configured === true
+                                }
                             }
                         }
                     }
+                }
+            }
+
+            // Logos storage button
+            Rectangle {
+                width: 32; height: 32
+                radius: 6
+                color: logosBtn.containsMouse ? root.bgSecondary : "transparent"
+                border.color: root.logosPanelOpen ? root.accentOrange : root.borderColor
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "◈"
+                    font.pixelSize: 14
+                    color: root.logosPanelOpen     ? root.accentOrange
+                         : root.logosStorageReady  ? root.successGreen
+                         : root.logosStorageStarting ? root.warningYellow
+                         : root.textMuted
+                }
+
+                MouseArea {
+                    id: logosBtn
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: root.logosPanelOpen = !root.logosPanelOpen
                 }
             }
         }
@@ -342,7 +391,7 @@ Item {
             ComboBox {
                 id: providerCombo
                 Layout.fillWidth: true
-                model: ["Pinata", "Kubo (self-hosted)"]
+                model: ["Pinata", "Kubo (self-hosted)", "Logos Storage"]
                 background: Rectangle {
                     color: root.bgSecondary
                     border.color: root.borderColor
@@ -380,6 +429,7 @@ Item {
                 text: "Bearer Token"
                 font.pixelSize: 11
                 color: root.textSecondary
+                visible: providerCombo.currentIndex !== 2
             }
 
             Rectangle {
@@ -389,6 +439,7 @@ Item {
                 color: root.bgSecondary
                 border.color: root.borderColor
                 border.width: 1
+                visible: providerCombo.currentIndex !== 2
 
                 TextField {
                     id: tokenField
@@ -435,9 +486,13 @@ Item {
                 Layout.fillWidth: true
 
                 Text {
-                    text: root.pinningConfigured ? "● Configured" : "● Not configured — backups will fail"
+                    text: providerCombo.currentIndex === 2
+                          ? (root.logosStorageReady ? "● Logos Storage ready" : root.logosStorageStarting ? "● Logos Storage starting…" : "● Logos Storage — init failed")
+                          : (root.pinningConfigured ? "● Configured" : "● Not configured — backups will fail")
                     font.pixelSize: 11
-                    color: root.pinningConfigured ? root.successGreen : root.errorRed
+                    color: providerCombo.currentIndex === 2
+                           ? (root.logosStorageReady ? root.successGreen : root.logosStorageStarting ? root.warningYellow : root.errorRed)
+                           : (root.pinningConfigured ? root.successGreen : root.errorRed)
                     Layout.fillWidth: true
                 }
 
@@ -461,18 +516,138 @@ Item {
                         hoverEnabled: true
                         onClicked: {
                             if (typeof logos === "undefined" || !logos.callModule) return
-                            var provider = providerCombo.currentIndex === 0 ? "pinata" : "kubo"
-                            var endpoint = endpointField.text.trim()
-                            var token    = tokenField.text.trim()
-                            var res = callModuleParse(logos.callModule("stash", "setPinningConfig",
-                                                                       [provider, endpoint, token]))
-                            if (res && res.ok) {
-                                root.pinningConfigured = true
-                                root.pinningPanelOpen = false
+                            if (providerCombo.currentIndex === 2) {
+                                // Logos Storage — set active transport
+                                var tres = callModuleParse(
+                                    logos.callModule("stash", "setActiveTransport", ["logos"]))
+                                if (tres && tres.ok) {
+                                    root.activeTransport = "logos"
+                                    root.pinningConfigured = true
+                                    root.pinningPanelOpen = false
+                                }
+                            } else {
+                                var provider = providerCombo.currentIndex === 0 ? "pinata" : "kubo"
+                                var endpoint = endpointField.text.trim()
+                                var token    = tokenField.text.trim()
+                                var res = callModuleParse(logos.callModule("stash", "setPinningConfig",
+                                                                           [provider, endpoint, token]))
+                                if (res && res.ok) {
+                                    logos.callModule("stash", "setActiveTransport",
+                                                     [provider === "pinata" ? "pinata" : "kubo"])
+                                    root.activeTransport = provider
+                                    root.pinningConfigured = true
+                                    root.pinningPanelOpen = false
+                                }
                             }
                         }
                     }
                 }
+            }
+        }
+
+        // ── Logos storage panel (collapsible) ────────────────────────────
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 6
+            visible: root.logosPanelOpen
+
+            // Status row
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    text: "Logos Storage"
+                    font.pixelSize: 11
+                    color: root.textSecondary
+                }
+
+                Rectangle {
+                    width: 6; height: 6; radius: 3
+                    color: root.logosStorageReady   ? root.successGreen
+                         : root.logosStorageStarting ? root.warningYellow
+                         : root.textMuted
+                }
+
+                Text {
+                    text: root.logosStorageReady   ? "Ready"
+                        : root.logosStorageStarting ? "Starting…"
+                        : "Offline"
+                    font.pixelSize: 11
+                    color: root.logosStorageReady   ? root.successGreen
+                         : root.logosStorageStarting ? root.warningYellow
+                         : root.textMuted
+                }
+
+                Item { Layout.fillWidth: true }
+            }
+
+            // Peer ID (shown when ready)
+            Text {
+                visible: root.logosStoragePeerId.length > 0
+                text: "Peer: " + root.logosStoragePeerId.substring(0, 20) + "…"
+                font.pixelSize: 10
+                font.family: "Courier New, monospace"
+                color: root.textMuted
+            }
+
+            // Transport selector
+            Text {
+                text: "Active transport"
+                font.pixelSize: 11
+                color: root.textSecondary
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Repeater {
+                    model: [
+                        { label: "Logos",  value: "logos"  },
+                        { label: "Kubo",   value: "kubo"   },
+                        { label: "Pinata", value: "pinata" }
+                    ]
+
+                    delegate: Rectangle {
+                        required property var modelData
+                        readonly property bool selected: root.activeTransport === modelData.value
+                        readonly property bool isLogos:  modelData.value === "logos"
+
+                        width: 64; height: 26
+                        radius: 4
+                        color: selected
+                               ? root.accentOrange
+                               : (transportArea.containsMouse ? root.bgSecondary : "transparent")
+                        border.color: selected ? root.accentOrange : root.borderColor
+                        border.width: 1
+                        // Disable Logos option when not ready
+                        opacity: isLogos && !root.logosStorageReady ? 0.4 : 1.0
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            font.pixelSize: 11
+                            color: selected ? root.bgPrimary : root.textSecondary
+                        }
+
+                        MouseArea {
+                            id: transportArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            enabled: !(isLogos && !root.logosStorageReady)
+                            onClicked: {
+                                if (typeof logos === "undefined" || !logos.callModule) return
+                                var res = callModuleParse(
+                                    logos.callModule("stash", "setActiveTransport",
+                                                     [modelData.value]))
+                                if (res && res.ok) root.activeTransport = modelData.value
+                            }
+                        }
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
             }
         }
 
@@ -486,10 +661,11 @@ Item {
 
             property alias logModel: logListView.model
 
-            TextEdit { id: clipHelper; visible: false }
+            // visible:false prevents selectAll()/copy() on Linux — keep rendered but invisible
+            TextEdit { id: clipHelper; opacity: 0; width: 0; height: 0 }
 
             function copyAllToClipboard() {
-                var text = ""
+                var text = "# stash log\n"
                 for (var i = 0; i < logModel.count; i++) {
                     var e = logModel.get(i)
                     text += e.ts + " " + e.msg + "\n"

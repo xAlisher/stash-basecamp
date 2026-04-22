@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 
+class LogosAPI;
 class LogosAPIClient;
 
 /**
@@ -45,17 +46,35 @@ public:
 };
 
 /**
- * Real transport — forwards to a LogosAPIClient instance targeting
- * "storage_module". Does not own the client.
+ * Real transport — uses the typed StorageModule SDK (generated from
+ * storage_module_api.h) for upload/download and event subscription.
+ * Owns the StorageModule wrapper. Call init() + start() once before
+ * the first upload; both are synchronous (start may block ~30 s without
+ * the detached-start fork of storage_module).
  */
+class StorageModule;  // from src/generated/storage_module_api.h
+
 class LogosStorageTransport : public StorageTransport
 {
 public:
-    explicit LogosStorageTransport(LogosAPIClient* client);
-    ~LogosStorageTransport() override = default;
+    explicit LogosStorageTransport(LogosAPI* api);
+    ~LogosStorageTransport() override;
+
+    /**
+     * Call once from a deferred context (QTimer::singleShot) to bring up
+     * the storage node. Returns false if init or start fails.
+     * dataDir: writable directory for storage node data.
+     */
+    bool initAndStart(const QString& dataDir);
 
     bool isConnected() const override;
     void uploadUrl(const QUrl& fileUrl, int chunkSize) override;
+
+    /**
+     * Download via Logos IPC is not yet fully implemented (downloadChunks
+     * has no dest-path parameter in current API). This stub fires an
+     * immediate error via the event callback.
+     */
     void downloadToUrl(const QString& cid,
                        const QUrl& destUrl,
                        bool localOnly,
@@ -63,7 +82,9 @@ public:
     void subscribeEventResponse(EventCallback cb) override;
 
 private:
-    LogosAPIClient* m_client;   // not owned
+    StorageModule*  m_storage;  // owned
+    bool            m_ready = false;
+    EventCallback   m_eventCb;
 };
 
 /**
