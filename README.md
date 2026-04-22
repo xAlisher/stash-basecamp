@@ -8,6 +8,7 @@ Any module can add one-click backup to IPFS / Logos Storage by exposing two C++ 
 ## Features
 
 - **Three transports** — Logos Storage (P2P, no account needed), Kubo (local IPFS node), Pinata (hosted pinning)
+- **Tested with** [`vpavlin/logos-storage-module`](https://github.com/vpavlin/logos-storage-module) at `9552adf` (`v0.3.2-25-g9552adf`)
 - **Activity log** — timestamped entries for every upload with filename → CID
 - **StashButton** — drop-in QML component: reads active transport, exports file, uploads, delivers CID back to your module
 - **Scheduled backups** — `setWatchedModules` + `checkAll` for background polling
