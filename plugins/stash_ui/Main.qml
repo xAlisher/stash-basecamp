@@ -164,21 +164,20 @@ Item {
             Rectangle {
                 id: transportPill
                 height: 28
-                width: pillRow.implicitWidth + 20
+                implicitWidth: pillRow.implicitWidth + 20
                 radius: 14
                 color: transportPillArea.containsMouse ? root.bgSecondary : Qt.rgba(0.149, 0.149, 0.149, 0.85)
                 border.color: root.transportPopupOpen ? root.accentOrange : root.borderColor
                 border.width: 1
 
-                Row {
+                RowLayout {
                     id: pillRow
-                    x: 10
-                    anchors.verticalCenter: parent.verticalCenter
+                    anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
                     spacing: 6
 
                     Rectangle {
                         width: 7; height: 7; radius: 4
-                        anchors.verticalCenter: parent.verticalCenter
+                        Layout.alignment: Qt.AlignVCenter
                         color: root.transportDotColor()
                     }
 
@@ -186,14 +185,12 @@ Item {
                         text: root.transportLabel(root.activeTransport)
                         font.pixelSize: 11
                         color: root.textPrimary
-                        anchors.verticalCenter: parent.verticalCenter
                     }
 
                     Text {
                         text: "▾"
                         font.pixelSize: 9
                         color: root.textSecondary
-                        anchors.verticalCenter: parent.verticalCenter
                     }
                 }
 
@@ -451,21 +448,18 @@ Item {
                         Layout.fillWidth: true
                     }
 
-                    // Save button — same style as copy button in logs
-                    Rectangle {
-                        width: 26; height: 26
-                        radius: 4
-                        color: modSaveArea.containsMouse ? root.bgSecondary : "transparent"
-                        border.color: modSaveArea.containsMouse ? root.borderColor : "transparent"
-                        border.width: 1
-                        opacity: modSaveArea.containsMouse ? 1.0 : 0.5
-                        Behavior on opacity { NumberAnimation { duration: 150 } }
+                    // Save button
+                    Item {
+                        width: 20; height: 20
 
-                        Text {
+                        Image {
                             anchors.centerIn: parent
-                            text: "↓"
-                            font.pixelSize: 14
-                            color: root.textSecondary
+                            width: 16; height: 16
+                            source: "icons/Save.svg"
+                            fillMode: Image.PreserveAspectFit
+                            opacity: modSaveArea.pressed ? 0.6
+                                   : modSaveArea.containsMouse ? 1.0 : 0.4
+                            Behavior on opacity { NumberAnimation { duration: 120 } }
                         }
 
                         MouseArea {
@@ -534,25 +528,17 @@ Item {
                     Item { Layout.fillWidth: true }
 
                     // Copy-all button
-                    Rectangle {
-                        width: 26; height: 26
-                        radius: 4
-                        color: copyBtnArea.containsMouse ? root.bgSecondary : "transparent"
-                        border.color: copyBtnArea.containsMouse ? root.borderColor : "transparent"
-                        border.width: 1
-                        opacity: copyBtnArea.containsMouse ? 1.0 : 0.5
-                        Behavior on opacity { NumberAnimation { duration: 150 } }
+                    Item {
+                        width: 20; height: 20
 
-                        // Clipboard icon (two overlapping squares)
-                        Rectangle {
-                            x: 4; y: 7; width: 10; height: 11
-                            color: "transparent"
-                            border.color: root.textSecondary; border.width: 1; radius: 1
-                        }
-                        Rectangle {
-                            x: 7; y: 4; width: 10; height: 11
-                            color: copyBtnArea.containsMouse ? root.bgSecondary : root.bgPrimary
-                            border.color: root.textSecondary; border.width: 1; radius: 1
+                        Image {
+                            anchors.centerIn: parent
+                            width: 16; height: 16
+                            source: "icons/Copy.svg"
+                            fillMode: Image.PreserveAspectFit
+                            opacity: copyBtnArea.pressed ? 0.6
+                                   : copyBtnArea.containsMouse ? 1.0 : 0.4
+                            Behavior on opacity { NumberAnimation { duration: 120 } }
                         }
 
                         MouseArea {
@@ -569,13 +555,7 @@ Item {
                                 clipHelper.text = text
                                 clipHelper.selectAll()
                                 clipHelper.copy()
-                                copyDoneTimer.restart()
                             }
-                        }
-
-                        Timer {
-                            id: copyDoneTimer
-                            interval: 1200
                         }
                     }
                 }
