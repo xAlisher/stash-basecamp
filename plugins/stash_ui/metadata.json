@@ -4,8 +4,8 @@
   "type": "ui_qml",
   "category": "storage",
   "description": "Lean decentralised storage — UI",
-  "view": "Main.qml",
-  "icon": "icons/Stash_sidebar.png",
+  "view": "qml/Main.qml",
+  "icon": "qml/icons/Stash_sidebar.png",
   "dependencies": ["stash"],
 
   "nix": {
