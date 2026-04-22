@@ -621,36 +621,36 @@ Item {
         RowLayout {
             Layout.fillWidth: true
 
+            Text {
+                text: "Get Stash button for your module"
+                font.pixelSize: 11
+                color: root.textSecondary
+            }
+
+            // Copy GitHub link button
             Item {
-                implicitWidth:  linkRow.implicitWidth
-                implicitHeight: linkRow.implicitHeight
+                width: 20; height: 20
 
-                Row {
-                    id: linkRow
-                    spacing: 0
-
-                    Text {
-                        text: "Get Stash button for your module"
-                        font.pixelSize: 11
-                        color: footerLinkArea.containsMouse ? root.accentOrange : root.textSecondary
-                        Behavior on color { ColorAnimation { duration: 120 } }
-                    }
-
-                    Text {
-                        text: " ↗"
-                        font.pixelSize: 11
-                        color: footerLinkArea.containsMouse ? root.accentOrange : root.textMuted
-                        anchors.verticalCenter: parent.verticalCenter
-                        Behavior on color { ColorAnimation { duration: 120 } }
-                    }
+                Image {
+                    anchors.centerIn: parent
+                    width: 14; height: 14
+                    source: "icons/Copy.svg"
+                    fillMode: Image.PreserveAspectFit
+                    opacity: footerCopyArea.pressed ? 0.6
+                           : footerCopyArea.containsMouse ? 1.0 : 0.4
+                    Behavior on opacity { NumberAnimation { duration: 120 } }
                 }
 
                 MouseArea {
-                    id: footerLinkArea
+                    id: footerCopyArea
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: Qt.openUrlExternally("https://github.com/xAlisher/stash-basecamp/blob/main/docs/stash-button-integration.md")
+                    onClicked: {
+                        clipHelper.text = "https://github.com/xAlisher/stash-basecamp/blob/main/docs/stash-button-integration.md"
+                        clipHelper.selectAll()
+                        clipHelper.copy()
+                    }
                 }
             }
 
