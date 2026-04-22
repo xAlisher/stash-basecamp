@@ -143,6 +143,7 @@ Item {
             spacing: 10
 
             ColumnLayout {
+                Layout.fillWidth: true
                 spacing: 2
                 Text {
                     text: "Stash"
@@ -158,8 +159,6 @@ Item {
                     Layout.fillWidth: true
                 }
             }
-
-            Item { Layout.fillWidth: true }
 
             // Transport status pill
             Rectangle {
