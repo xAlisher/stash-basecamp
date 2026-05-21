@@ -17,6 +17,7 @@ class LogosAPIClient;  // from cpp/logos_api_client.h
 // Tracks an in-flight Logos upload.
 struct PendingLogosUpload {
     QString filePath;
+    QString sourceModule;   // originating module name threaded from checkAll()
 };
 
 class StashPlugin : public QObject, public PluginInterface
@@ -113,7 +114,7 @@ private:
 
     // Queue a file for Logos upload.
     // Returns {"queued":true} or {"error":"..."}.
-    QString queueViaLogos(const QString& filePath);
+    QString queueViaLogos(const QString& filePath, const QString& sourceModule = {});
 
     // Upload via uploadUrl (yolo-board pattern): sync call, storageUploadDone event
     // arrives during waitForFinished's nested event loop.

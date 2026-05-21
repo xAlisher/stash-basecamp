@@ -71,6 +71,7 @@ private slots:
 
     void testLogCapAt100();
     void testLogEntriesJson();
+    void testAppendLogSourceField();
 
     void testLogEventSignalFired();
 
@@ -229,7 +230,22 @@ void TestStashBackend::testLogEntriesJson()
     QJsonObject first = arr.first().toObject();
     QVERIFY(first.contains(QStringLiteral("type")));
     QVERIFY(first.contains(QStringLiteral("detail")));
+    QVERIFY(first.contains(QStringLiteral("source")));
     QVERIFY(first.contains(QStringLiteral("timestamp")));
+}
+
+void TestStashBackend::testAppendLogSourceField()
+{
+    StashBackend b;
+    b.appendLog(QStringLiteral("uploaded"), QStringLiteral("bafxxx"),
+                QStringLiteral("logos_notes"));
+
+    const QJsonArray arr = b.logEntries();
+    QVERIFY(!arr.isEmpty());
+    const QJsonObject obj = arr.last().toObject();
+    QCOMPARE(obj[QStringLiteral("type")].toString(),   QStringLiteral("uploaded"));
+    QCOMPARE(obj[QStringLiteral("detail")].toString(), QStringLiteral("bafxxx"));
+    QCOMPARE(obj[QStringLiteral("source")].toString(), QStringLiteral("logos_notes"));
 }
 
 // ── Signal ────────────────────────────────────────────────────────────────────

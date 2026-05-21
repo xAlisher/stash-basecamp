@@ -188,7 +188,7 @@ void StashPlugin::initLogosStorage()
     const auto deferred = m_deferredLogosUploads;
     m_deferredLogosUploads.clear();
     for (const PendingLogosUpload& def : deferred)
-        queueViaLogos(def.filePath);
+        queueViaLogos(def.filePath, def.sourceModule);
 }
 
 void StashPlugin::handleLogosUploadDone(const QString& sessionId, const QString& cid)
@@ -214,7 +214,9 @@ void StashPlugin::handleLogosUploadDone(const QString& sessionId, const QString&
         return;
     }
 
-    m_backend.appendLog("logos_uploaded", QStringLiteral("Logos Storage: ") + fname + QStringLiteral(" \u2192 ") + cid);
+    m_backend.appendLog("logos_uploaded",
+                        QStringLiteral("Logos Storage: ") + fname + QStringLiteral(" \u2192 ") + cid,
+                        pending.sourceModule);
     stashDiag(QStringLiteral("handleLogosUploadDone: cid=%1 file=%2").arg(cid, fname));
     qInfo() << "StashPlugin: Logos upload done cid=" << cid << "file=" << fname;
 
@@ -331,7 +333,7 @@ QString StashPlugin::checkAll()
 
         bool ok = false;
         if (useLogos) {
-            const QString qr = queueViaLogos(filePath);
+            const QString qr = queueViaLogos(filePath, moduleName);
             const QJsonObject qobj = QJsonDocument::fromJson(qr.toUtf8()).object();
             ok = qobj.value(QStringLiteral("queued")).toBool();
         } else {
@@ -346,7 +348,8 @@ QString StashPlugin::checkAll()
                         capturedObject,
                         QStringLiteral("setBackupCid"),
                         cid, ts);
-                });
+                },
+                moduleName);
         }
 
         if (ok) ++queued;
@@ -361,14 +364,15 @@ QString StashPlugin::checkAll()
 
 // ── Logos IPC upload ──────────────────────────────────────────────────────────
 
-QString StashPlugin::queueViaLogos(const QString& filePath)
+QString StashPlugin::queueViaLogos(const QString& filePath, const QString& sourceModule)
 {
     if (!m_logosStorage)
         return errorJson(QStringLiteral("Logos storage not initialized"));
 
     if (m_logosStorageStarting) {
         PendingLogosUpload def;
-        def.filePath = filePath;
+        def.filePath     = filePath;
+        def.sourceModule = sourceModule;
         m_deferredLogosUploads.append(def);
         stashDiag(QStringLiteral("queueViaLogos: deferred (storage starting) %1").arg(QFileInfo(filePath).fileName()));
         return queuedJson();
@@ -381,7 +385,8 @@ QString StashPlugin::queueViaLogos(const QString& filePath)
         return errorJson(QStringLiteral("File not found: ") + filePath);
 
     PendingLogosUpload pending;
-    pending.filePath = filePath;
+    pending.filePath     = filePath;
+    pending.sourceModule = sourceModule;
     m_pendingLogosUploads[filePath] = pending;
 
     const QString fname = QFileInfo(filePath).fileName();

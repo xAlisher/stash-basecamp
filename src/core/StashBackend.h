@@ -40,7 +40,8 @@ public:
 
     // Async upload with a success callback fired (on the Qt thread) when the CID is ready.
     bool uploadWithCallback(const QString& filePath,
-                            std::function<void(const QString& cid)> onSuccess);
+                            std::function<void(const QString& cid)> onSuccess,
+                            const QString& source = {});
 
     // Async download. Returns false immediately if unavailable.
     bool download(const QString& cid, const QString& destPath);
@@ -53,7 +54,8 @@ public:
     QJsonArray logEntries() const;
 
     // Append an entry directly — used by StashPlugin for uploadViaIpfs events.
-    void appendLog(const QString& type, const QString& detail);
+    void appendLog(const QString& type, const QString& detail,
+                   const QString& source = {});
 
 signals:
     // Fired for every log event — UI polls getLog() but can also connect here.
@@ -66,6 +68,7 @@ private:
     struct LogEntry {
         QString   type;
         QString   detail;
+        QString   source;     // originating module name ("logos_notes", etc.); "" = Stash itself
         qint64    timestamp;  // ms since epoch
     };
     QList<LogEntry> m_log;

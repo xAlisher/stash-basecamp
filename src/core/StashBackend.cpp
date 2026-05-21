@@ -39,7 +39,8 @@ bool StashBackend::upload(const QString& filePath)
 }
 
 bool StashBackend::uploadWithCallback(const QString& filePath,
-                                       std::function<void(const QString&)> onSuccess)
+                                       std::function<void(const QString&)> onSuccess,
+                                       const QString& source)
 {
     if (!m_client || !m_client->isAvailable()) {
         appendLog(QStringLiteral("offline"), {});
@@ -47,14 +48,14 @@ bool StashBackend::uploadWithCallback(const QString& filePath,
     }
 
     const QString name = QFileInfo(filePath).fileName();
-    appendLog(QStringLiteral("uploading"), name);
+    appendLog(QStringLiteral("uploading"), name, source);
 
     m_client->uploadFile(filePath,
-        [this, onSuccess](const QString& cid, const QString& error) {
+        [this, onSuccess, source](const QString& cid, const QString& error) {
             if (!error.isEmpty()) {
-                appendLog(QStringLiteral("error"), error);
+                appendLog(QStringLiteral("error"), error, source);
             } else {
-                appendLog(QStringLiteral("uploaded"), cid);
+                appendLog(QStringLiteral("uploaded"), cid, source);
                 if (onSuccess)
                     onSuccess(cid);
             }
@@ -97,16 +98,18 @@ QJsonArray StashBackend::logEntries() const
         QJsonObject obj;
         obj[QStringLiteral("type")]      = e.type;
         obj[QStringLiteral("detail")]    = e.detail;
+        obj[QStringLiteral("source")]    = e.source;
         obj[QStringLiteral("timestamp")] = e.timestamp;
         arr.append(obj);
     }
     return arr;
 }
 
-void StashBackend::appendLog(const QString& type, const QString& detail)
+void StashBackend::appendLog(const QString& type, const QString& detail,
+                              const QString& source)
 {
     if (m_log.size() >= kMaxLog)
         m_log.removeFirst();
-    m_log.append({type, detail, QDateTime::currentMSecsSinceEpoch()});
+    m_log.append({type, detail, source, QDateTime::currentMSecsSinceEpoch()});
     emit logEvent(type, detail);
 }
