@@ -206,8 +206,12 @@ void StashPlugin::handleLogosUploadDone(const QString& sessionId, const QString&
         m_pendingLogosUploads.erase(it);
     }
 
-    const QString fname = pending.filePath.isEmpty()
-        ? cid.left(12) : QFileInfo(pending.filePath).fileName();
+    // If pending entry was evicted (e.g. uploadUrl returned error but storage_module
+    // still completed the upload internally), fall back to the last attempted path.
+    const QString resolvedPath = pending.filePath.isEmpty() ? m_lastUploadFilePath
+                                                             : pending.filePath;
+    const QString fname = resolvedPath.isEmpty() ? cid.left(12)
+                                                 : QFileInfo(resolvedPath).fileName();
 
     if (cid.isEmpty()) {
         m_backend.appendLog("error", "Logos upload done but no CID");
@@ -429,6 +433,7 @@ void StashPlugin::doChunkedUpload(const QString& filePath, const QString& fname)
                          QStringLiteral("stash_headless_bootstrap_v1"));
     }
 
+    m_lastUploadFilePath = filePath;   // keep for handleLogosUploadDone fallback
     stashDiag(QStringLiteral("uploadUrl sync: file=%1").arg(fname));
 
     const LogosResult r = m_logosStorage->uploadUrl(filePath, kLogosChunkSize);

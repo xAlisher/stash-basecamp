@@ -135,6 +135,10 @@ private:
     QMap<QString, PendingLogosUpload>     m_pendingLogosUploads;   // sessionId → upload
     QList<PendingLogosUpload>             m_deferredLogosUploads;  // queued while storage starting
 
+    // Most-recently-attempted upload path — fallback when pending entry is gone
+    // (e.g. uploadUrl failed but storageUploadDone fires anyway via internal retry).
+    QString                               m_lastUploadFilePath;
+
     // Latest successful Logos upload result — polled by caller modules.
     QString                               m_latestLogosFile;
     QString                               m_latestLogosCid;
