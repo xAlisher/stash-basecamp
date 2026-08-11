@@ -1,5 +1,8 @@
 # stash-basecamp
 
+> This is a personal, experimental hobby project. It is not an official Logos product. Not audited.
+
+
 Decentralised file storage for [Logos Basecamp](https://github.com/logos-co/logos-app) modules.
 
 Drop a file, get a CID back. Any module can add one-click backup to IPFS / Logos Storage by exposing two C++ methods and dropping in a QML component.
